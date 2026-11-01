@@ -73,11 +73,14 @@ export function usePoseCamera(onFrame: FrameHandler, enabled = true) {
         setStatus('ready');
 
         let last = 0;
+        // 느린 태블릿에서는 인식 한 번에 오래 걸려 신호 화면이 버벅일 수 있어서,
+        // 인식에 걸린 시간의 1.5배만큼은 쉬었다가 다음 인식을 합니다.
+        let gap = DETECT_INTERVAL_MS;
         const loop = () => {
           if (cancelled) return;
           raf = requestAnimationFrame(loop);
           const now = performance.now();
-          if (now - last < DETECT_INTERVAL_MS) return;
+          if (now - last < gap) return;
           const video = videoElRef.current;
           if (!video || video.readyState < 2 || !video.videoWidth) return;
           last = now;
@@ -88,6 +91,8 @@ export function usePoseCamera(onFrame: FrameHandler, enabled = true) {
           } catch {
             lm = null;
           }
+          const cost = performance.now() - now;
+          gap = 0.7 * gap + 0.3 * Math.max(DETECT_INTERVAL_MS, cost * 1.5);
           handlerRef.current(lm, now, video.videoWidth / video.videoHeight, video);
         };
         raf = requestAnimationFrame(loop);

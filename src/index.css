@@ -37,6 +37,9 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* 한국어 낱말이 중간에서 끊기지 않게 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }

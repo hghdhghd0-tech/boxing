@@ -137,8 +137,14 @@ export function RecordScreen({ onExit, onGoGuard }: { onExit: () => void; onGoGu
                   <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">
                     <span className="font-extrabold">섀도 반응 콜러</span>
                     <span className="text-ink-soft">최고 레벨 {callerSum.maxLevel}</span>
-                    <span className="ml-auto rounded-xl bg-amber-50 px-3 py-1 text-sm font-bold text-amber-700">
-                      가드 복귀 {callerSum.rate === null ? '측정 안 됨' : pct(callerSum.rate)}
+                    <span className="ml-auto flex flex-wrap gap-2 text-sm font-bold">
+                      <span className="rounded-xl bg-slate-200/60 px-3 py-1 text-straight">
+                        동작 점수{' '}
+                        {!callerSum.action ? '측정 안 함' : callerSum.action.accuracy === null ? '판정 안 됨' : pct(callerSum.action.accuracy)}
+                      </span>
+                      <span className="rounded-xl bg-amber-50 px-3 py-1 text-amber-700">
+                        가드 복귀 {callerSum.rate === null ? '측정 안 됨' : pct(callerSum.rate)}
+                      </span>
                     </span>
                   </div>
                 )}
@@ -282,13 +288,19 @@ function History({ records }: { records: SessionRecord[] }) {
   const rows = records.map((r) => {
     const g = summarizeGuard(r.guard);
     const c = summarizeCaller(r.caller);
-    return { r, hand: g?.hand ?? null, elbow: g?.elbow ?? null, ret: c?.rate ?? null };
+    return { r, hand: g?.hand ?? null, elbow: g?.elbow ?? null, act: c?.action?.accuracy ?? null, ret: c?.rate ?? null };
   });
   const last = rows[rows.length - 1];
   const prev = rows.length > 1 ? rows[rows.length - 2] : null;
   const diff = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((a - b) * 100));
   const dHand = prev ? diff(last.hand, prev.hand) : null;
   const dElbow = prev ? diff(last.elbow, prev.elbow) : null;
+  const dAct = prev ? diff(last.act, prev.act) : null;
+  const changes = [
+    dHand !== null && `손 유지율 ${dHand >= 0 ? '+' : ''}${dHand}%p`,
+    dElbow !== null && `팔꿈치 유지율 ${dElbow >= 0 ? '+' : ''}${dElbow}%p`,
+    dAct !== null && `동작 점수 ${dAct >= 0 ? '+' : ''}${dAct}%p`,
+  ].filter(Boolean);
 
   return (
     <div className="space-y-4">
@@ -300,24 +312,23 @@ function History({ records }: { records: SessionRecord[] }) {
           <span className="h-3 w-3 rounded-full bg-mint-300" /> 팔꿈치 유지율
         </span>
         <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-full bg-straight" /> 동작 점수
+        </span>
+        <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-full bg-defense" /> 가드 복귀율
         </span>
       </div>
-      {rows.map(({ r, hand, elbow, ret }) => (
+      {rows.map(({ r, hand, elbow, act, ret }) => (
         <div key={r.id} className="space-y-1.5">
           <div className="font-extrabold">{r.lesson}차시</div>
           <Bar value={hand} color="bg-mint-500" />
           <Bar value={elbow} color="bg-mint-300" />
+          <Bar value={act} color="bg-straight" />
           <Bar value={ret} color="bg-defense" />
         </div>
       ))}
-      {prev && (dHand !== null || dElbow !== null) && (
-        <div className="rounded-2xl bg-mint-50 p-4 font-bold text-mint-700">
-          지난 차시보다{' '}
-          {dHand !== null && `손 유지율 ${dHand >= 0 ? '+' : ''}${dHand}%p`}
-          {dHand !== null && dElbow !== null && ', '}
-          {dElbow !== null && `팔꿈치 유지율 ${dElbow >= 0 ? '+' : ''}${dElbow}%p`}
-        </div>
+      {prev && changes.length > 0 && (
+        <div className="rounded-2xl bg-mint-50 p-4 font-bold text-mint-700">지난 차시보다 {changes.join(', ')}</div>
       )}
     </div>
   );

@@ -12,6 +12,8 @@ import {
   type Landmark,
 } from '../src/pose/guard.ts';
 import { pickNextSignal, LEVELS, type SignalKind } from '../src/caller/signals.ts';
+import { ActionJudge, mergeSummaries, summarizeJudgements, type JudgeResult, type Stance } from '../src/caller/actionJudge.ts';
+import { buildCopyText, summarizeCaller, type CallerRound, type SessionRecord } from '../src/storage/records.ts';
 
 let passed = 0;
 let failed = 0;
@@ -234,6 +236,168 @@ test('같은 신호가 세 번 연속 나오지 않는다', () => {
     assert(!(prev.length === 2 && prev[0] === k && prev[1] === k), `${i}번째에 ${k} 3연속`);
     prev = [...prev, k].slice(-2);
   }
+});
+
+console.log('\n[동작 판정]');
+type Pt3 = [number, number, number];
+const BODY: Record<JointKey, Pt3> = {
+  nose: [0.5, 0.28, -0.3],
+  lShoulder: [0.58, 0.4, -0.1],
+  rShoulder: [0.42, 0.4, -0.1],
+  lElbow: [0.57, 0.52, -0.15],
+  rElbow: [0.43, 0.52, -0.15],
+  lWrist: [0.54, 0.32, -0.35],
+  rWrist: [0.46, 0.32, -0.35],
+  lHip: [0.56, 0.75, 0],
+  rHip: [0.44, 0.75, 0],
+};
+const UPPER: JointKey[] = ['nose', 'lShoulder', 'rShoulder', 'lElbow', 'rElbow', 'lWrist', 'rWrist'];
+
+/** 0 → 1 → 0 으로 뻗었다가 돌아오는 곡선 (start부터 450ms) */
+const punchCurve = (t: number, start: number) => {
+  const u = t - start;
+  if (u < 0 || u > 450) return 0;
+  if (u < 150) return u / 150;
+  if (u < 300) return 1;
+  return 1 - (u - 300) / 150;
+};
+const holdCurve = (t: number, start: number, len = 600) => {
+  const u = t - start;
+  if (u < 0 || u > len + 300) return 0;
+  if (u < 150) return u / 150;
+  if (u < len) return 1;
+  return Math.max(0, 1 - (u - len) / 300);
+};
+
+type Motion = (t: number, body: Record<JointKey, Pt3>) => void;
+const punch = (side: 'l' | 'r', start: number): Motion => (t, b) => {
+  const p = punchCurve(t, start);
+  const k: JointKey = side === 'l' ? 'lWrist' : 'rWrist';
+  b[k] = [b[k][0] + (side === 'l' ? -0.03 : 0.03) * p, b[k][1] - 0.04 * p, b[k][2] - 0.25 * p];
+};
+const shiftUpper = (dx: number, dy: number, start: number, withHips = false): Motion => (t, b) => {
+  const p = holdCurve(t, start);
+  for (const k of withHips ? (Object.keys(b) as JointKey[]) : UPPER) b[k] = [b[k][0] + dx * p, b[k][1] + dy * p, b[k][2]];
+};
+const dropHand = (start: number): Motion => (t, b) => {
+  const p = holdCurve(t, start, 800);
+  b.lWrist = [b.lWrist[0] + 0.04 * p, b.lWrist[1] + 0.3 * p, b.lWrist[2]];
+};
+
+function frame(t: number, motions: Motion[], vis = 0.95): Landmark[] {
+  const b = Object.fromEntries(Object.entries(BODY).map(([k, v]) => [k, [...v]])) as Record<JointKey, Pt3>;
+  for (const m of motions) m(t, b);
+  const lm: Landmark[] = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 0.1 }));
+  for (const [k, v] of Object.entries(b) as [JointKey, Pt3][]) {
+    lm[IDX[k]] = { x: v[0] + (Math.random() - 0.5) * 0.004, y: v[1] + (Math.random() - 0.5) * 0.004, z: v[2] + (Math.random() - 0.5) * 0.01, visibility: vis };
+  }
+  return lm;
+}
+
+function judgeOnce(stance: Stance, expected: SignalKind, motions: Motion[], vis = 0.95, dt = 66): JudgeResult {
+  const j = new ActionJudge(stance);
+  for (let t = -10 * dt; t <= 0; t += dt) j.onFrame(t, frame(t, [], vis), ASPECT);
+  j.onSignal(0, expected, 3000);
+  for (let t = dt; t <= 2000; t += dt) j.onFrame(t, frame(t, motions, vis), ASPECT);
+  j.flush();
+  const r = j.takeFresh();
+  if (r.length !== 1) throw new Error(`판정 개수 ${r.length}`);
+  return r[0];
+}
+const expectDetect = (r: JudgeResult, want: string) =>
+  assert(r.detected === want, `기대 ${want}, 판정 ${r.detected}`);
+
+test('가만히 있으면 "동작 없음"', () => expectDetect(judgeOnce('orthodox', 'jab', []), 'none'));
+test('오른손잡이: 왼손 펀치 = 잽 (정답, 반응 시간 계산)', () => {
+  const r = judgeOnce('orthodox', 'jab', [punch('l', 300)]);
+  expectDetect(r, 'jab');
+  assert(r.correct === true && r.reactionMs !== null && r.reactionMs >= 250 && r.reactionMs <= 500, `반응 ${r.reactionMs}`);
+});
+test('오른손잡이: 오른손 펀치 = 스트레이트', () => expectDetect(judgeOnce('orthodox', 'straight', [punch('r', 300)]), 'straight'));
+test('왼손잡이: 오른손 펀치 = 잽', () => expectDetect(judgeOnce('southpaw', 'jab', [punch('r', 300)]), 'jab'));
+test('왼손잡이: 왼손 펀치 = 스트레이트', () => expectDetect(judgeOnce('southpaw', 'straight', [punch('l', 300)]), 'straight'));
+test('잽 신호에 스트레이트를 치면 오답', () => {
+  const r = judgeOnce('orthodox', 'jab', [punch('r', 300)]);
+  assert(r.detected === 'straight' && r.correct === false, JSON.stringify(r));
+});
+test('원투: 앞손 → 뒷손 순서', () => expectDetect(judgeOnce('orthodox', 'onetwo', [punch('l', 250), punch('r', 550)]), 'onetwo'));
+test('원투 신호에 잽만 치면 오답', () => {
+  const r = judgeOnce('orthodox', 'onetwo', [punch('l', 250)]);
+  assert(r.detected === 'jab' && r.correct === false, JSON.stringify(r));
+});
+test('잽 신호에 원투를 치면 오답', () => {
+  const r = judgeOnce('orthodox', 'jab', [punch('l', 250), punch('r', 550)]);
+  assert(r.detected === 'onetwo' && r.correct === false, JSON.stringify(r));
+});
+test('스트레이트 정답 뒤에 다른 손을 움직여도 정답 유지', () => {
+  const r = judgeOnce('orthodox', 'straight', [punch('r', 250), punch('l', 900)]);
+  assert(r.detected === 'straight' && r.correct === true, JSON.stringify(r));
+});
+test('뒷손 → 앞손 순서는 원투가 아님', () => {
+  const r = judgeOnce('orthodox', 'onetwo', [punch('r', 250), punch('l', 600)]);
+  assert(r.correct === false, JSON.stringify(r));
+});
+test('왼쪽 슬립 (손이 머리와 같이 움직여도 펀치로 보지 않음)', () =>
+  expectDetect(judgeOnce('orthodox', 'slipLeft', [shiftUpper(0.08, 0.01, 300)]), 'slipLeft'));
+test('오른쪽 슬립', () => expectDetect(judgeOnce('orthodox', 'slipRight', [shiftUpper(-0.08, 0.01, 300)]), 'slipRight'));
+test('슬립 방향이 반대면 오답', () => {
+  const r = judgeOnce('orthodox', 'slipLeft', [shiftUpper(-0.08, 0.01, 300)]);
+  assert(r.detected === 'slipRight' && r.correct === false, JSON.stringify(r));
+});
+test('덕킹', () => expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)]), 'duck'));
+test('좌우 스텝은 슬립이 아님', () => expectDetect(judgeOnce('orthodox', 'slipLeft', [shiftUpper(0.08, 0, 300, true)]), 'none'));
+test('손을 어깨 아래로 내리면 펀치가 아님', () => expectDetect(judgeOnce('orthodox', 'jab', [dropHand(300)]), 'none'));
+test('느린 태블릿(1초에 5장면)에서도 잽·덕킹을 알아본다', () => {
+  expectDetect(judgeOnce('orthodox', 'jab', [punch('l', 300)], 0.95, 200), 'jab');
+  expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)], 0.95, 200), 'duck');
+  expectDetect(judgeOnce('orthodox', 'jab', [], 0.95, 200), 'none');
+});
+test('몸이 안 보이면 "판정 불가"', () => {
+  const r = judgeOnce('orthodox', 'jab', [punch('l', 300)], 0.3);
+  assert(r.detected === 'unknown' && r.correct === null, JSON.stringify(r));
+});
+test('점수 요약: 판정 불가는 빼고 계산', () => {
+  const rs: JudgeResult[] = [
+    { expected: 'jab', detected: 'jab', correct: true, reactionMs: 400, t0: 0 },
+    { expected: 'jab', detected: 'straight', correct: false, reactionMs: null, t0: 0 },
+    { expected: 'duck', detected: 'duck', correct: true, reactionMs: 600, t0: 0 },
+    { expected: 'duck', detected: 'unknown', correct: null, reactionMs: null, t0: 0 },
+  ];
+  const s = summarizeJudgements(rs);
+  assert(s.judged === 3 && s.correct === 2 && s.unknown === 1, JSON.stringify(s));
+  assert(Math.abs((s.accuracy ?? 0) - 2 / 3) < 1e-9 && s.avgReactionMs === 500, JSON.stringify(s));
+  assert(s.perKind.jab?.judged === 2 && s.perKind.jab?.correct === 1, JSON.stringify(s.perKind));
+  const m = mergeSummaries([s, s]);
+  assert(m?.judged === 6 && m.correct === 4 && m.avgReactionMs === 500, JSON.stringify(m));
+});
+
+console.log('\n[기록]');
+test('콜러 기록: 동작 점수를 합치고 복사 글에 넣는다', () => {
+  const a = summarizeJudgements([
+    { expected: 'jab', detected: 'jab', correct: true, reactionMs: 500, t0: 0 },
+    { expected: 'straight', detected: 'jab', correct: false, reactionMs: null, t0: 0 },
+  ]);
+  const base = { level: 2 as const, rounds: 2, signals: 30, measured: 10, returned: 8, rate: 0.8 };
+  const rounds: CallerRound[] = [
+    { at: 1, ...base, stance: 'orthodox', action: a },
+    { at: 2, ...base, stance: 'orthodox', action: a },
+    { at: 3, ...base, measured: 0, returned: 0, rate: null }, // 예전 기록(동작 판정 없음)
+  ];
+  const c = summarizeCaller(rounds);
+  assert(c?.action?.judged === 4 && c.action.correct === 2 && c.stance === 'orthodox', JSON.stringify(c));
+  const rec: SessionRecord = {
+    id: 'x',
+    lesson: 2,
+    date: '2026-11-01',
+    studentId: '20101',
+    checklist: { guard: 3, chin: 2, recover: 2, elbow: 3, stance: 1 },
+    reflection: '',
+    guard: [],
+    caller: rounds,
+  };
+  const text = buildCopyText(rec);
+  assert(text.includes('동작 점수: 50% (판정 4번 중 2번 정답, 평균 반응 0.50초)'), text);
+  assert(text.includes('잽 2/2, 스트레이트 0/2') && text.includes('왼손이 앞'), text);
 });
 
 console.log(`\n결과: ${passed}개 통과, ${failed}개 실패\n`);

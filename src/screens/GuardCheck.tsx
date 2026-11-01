@@ -600,13 +600,13 @@ function Result({
         <Stat label="가장 오래 무너진 시간" value={noData ? '-' : `${(stats.longestBreakMs / 1000).toFixed(1)}초`} tone="slate" />
         <Stat label="경고 횟수" value={noData ? '-' : `${stats.warnings}번`} tone="slate" />
       </div>
-      <Card className="bg-mint-50 shadow-none">
+      <div className="rounded-2xl bg-mint-50 p-6">
         <p className="text-lg font-bold text-mint-700">{tip}</p>
         <p className="mt-2 text-sm text-ink-soft">
           1초 넘게 무너진 시간만 계산했어요. 몸이 보인 시간은 {Math.round(Math.min(1, seen) * 100)}%예요.
           AI 판정은 참고용이고, 턱 당기기처럼 AI가 못 보는 부분도 있어요.
         </p>
-      </Card>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Button onClick={onAgain}>
           <RotateCcw className="h-5 w-5" /> 같은 미션 다시

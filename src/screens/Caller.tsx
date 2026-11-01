@@ -1,16 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowDown, ArrowLeft, ArrowRight, Camera, NotebookPen, Play, RotateCcw, Square, TrendingUp } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, Camera, Check, NotebookPen, Play, RotateCcw, Square, TrendingUp, X } from 'lucide-react';
 import { Button, Card, Choice, ScreenHeader, Stat, Toggle } from '../components/ui.tsx';
 import { LEVELS, SIGNALS, pickNextSignal, type Level, type SignalKind } from '../caller/signals.ts';
+import { ActionJudge, type Detected, type JudgeResult, type JudgeSummary, type Stance } from '../caller/actionJudge.ts';
 import { MetricsSmoother, ReturnTracker, computeMetrics, evaluate, type Baseline, type Landmark } from '../pose/guard.ts';
 import { usePoseCamera } from '../pose/usePoseCamera.ts';
-import { addCallerRound, getBaseline, pct } from '../storage/records.ts';
+import { KIND_NAME, KIND_ORDER, addCallerRound, getBaseline, pct, sec } from '../storage/records.ts';
 import { prefs } from '../lib/prefs.ts';
 import { beep, bell, keepScreenOn, toggleFullscreen, unlockAudio } from '../lib/device.ts';
 
 type Step = 'settings' | 'countdown' | 'run' | 'rest' | 'result';
 type Shown = { kind: SignalKind; id: number } | null;
+type Feedback = { id: number; ok: boolean; text: string } | null;
+type Summary = {
+  signals: number;
+  measured: number;
+  returned: number;
+  rate: number | null;
+  rounds: number;
+  action: JudgeSummary | null;
+};
+
+/** 앞손 설정에 따라 잽·스트레이트가 어느 손인지 */
+const HANDS: Record<Stance, { lead: string; rear: string; title: string; who: string }> = {
+  orthodox: { lead: '왼손', rear: '오른손', title: '왼손이 앞', who: '오른손잡이' },
+  southpaw: { lead: '오른손', rear: '왼손', title: '오른손이 앞', who: '왼손잡이' },
+};
+
+/** 틀렸을 때 화면에 보여 줄 말 */
+function wrongText(d: Detected | 'unknown'): string {
+  if (d === 'none') return '동작이 안 보였어요';
+  if (d === 'other') return '뒷손이 먼저 나갔어요';
+  if (d === 'unknown') return '';
+  return `보인 동작: ${KIND_NAME[d]}`;
+}
 
 const SIGNAL_TONE: Record<SignalKind, number> = {
   jab: 660,
@@ -32,13 +56,16 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
   const [intervalSec, setIntervalSec] = useState(3);
   const [hideWords, setHideWords] = useState(prefs.hideWords());
   const [sound, setSound] = useState(prefs.callerSound());
-  const [measure, setMeasure] = useState(!!baseline);
+  const [camera, setCamera] = useState(prefs.callerCamera());
+  const [stance, setStance] = useState<Stance | null>(prefs.stance());
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const [live, setLive] = useState({ correct: 0, judged: 0 });
   const [step, setStep] = useState<Step>('settings');
   const [shown, setShown] = useState<Shown>(null);
   const [now, setNow] = useState(() => performance.now());
   const [roundIndex, setRoundIndex] = useState(1);
   const [visible, setVisible] = useState(false);
-  const [summary, setSummary] = useState<{ signals: number; measured: number; returned: number; rate: number | null; rounds: number } | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
 
   const stepRef = useRef<Step>('settings');
   const stepStartRef = useRef(performance.now());
@@ -51,14 +78,45 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
   const shownIdRef = useRef(0);
   const returnRef = useRef(new ReturnTracker());
   const smootherRef = useRef(new MetricsSmoother());
+  const judgeRef = useRef<ActionJudge | null>(null);
+  const feedbackIdRef = useRef(0);
+  const feedbackUntilRef = useRef(0);
+  const liveRef = useRef({ correct: 0, judged: 0 });
   const visibleRef = useRef(false);
-  const settingsRef = useRef({ level, roundSec, restSec, rounds, intervalSec, sound, measuring: measure && !!baseline });
-  settingsRef.current = { level, roundSec, restSec, rounds, intervalSec, sound, measuring: measure && !!baseline };
+  const current = {
+    level,
+    roundSec,
+    restSec,
+    rounds,
+    intervalSec,
+    sound,
+    /** 카메라로 동작 판정 */
+    judging: camera && !!stance,
+    /** 가드 복귀율 (내 가드가 등록된 경우만) */
+    measuring: camera && !!baseline,
+    stance,
+  };
+  const settingsRef = useRef(current);
+  settingsRef.current = current;
 
   const go = useCallback((s: Step) => {
     stepRef.current = s;
     stepStartRef.current = performance.now();
     setStep(s);
+  }, []);
+
+  const showJudged = useCallback((results: JudgeResult[], t: number) => {
+    const judged = results.filter((r) => r.correct !== null);
+    if (!judged.length) return;
+    for (const r of judged) {
+      liveRef.current.judged += 1;
+      if (r.correct) liveRef.current.correct += 1;
+    }
+    setLive({ ...liveRef.current });
+    const last = judged[judged.length - 1];
+    feedbackIdRef.current += 1;
+    feedbackUntilRef.current = t + 1100;
+    setFeedback({ id: feedbackIdRef.current, ok: !!last.correct, text: last.correct ? '좋아요!' : wrongText(last.detected) });
   }, []);
 
   const onFrame = useCallback(
@@ -69,7 +127,13 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
         visibleRef.current = vis;
         setVisible(vis);
       }
-      if (stepRef.current !== 'run' || !baseline) return;
+      const s = stepRef.current;
+      const judge = judgeRef.current;
+      if (judge && (s === 'run' || s === 'countdown')) {
+        judge.onFrame(t, lm, aspect);
+        showJudged(judge.takeFresh(), t);
+      }
+      if (s !== 'run' || !baseline || !settingsRef.current.measuring) return;
       const sm = smootherRef.current.push(m);
       const ok = sm ? (() => {
         const ev = evaluate(sm, baseline);
@@ -77,35 +141,52 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
       })() : null;
       returnRef.current.onFrame(t, ok);
     },
-    [baseline],
+    [baseline, showJudged],
   );
 
-  const camOn = measure && !!baseline && step !== 'result';
+  const camOn = camera && step !== 'result';
   const { videoRef, status, error, retry } = usePoseCamera(onFrame, camOn);
 
   const finishRound = useCallback(() => {
     const st = settingsRef.current;
     setShown(null);
+    setFeedback(null);
     if (st.sound) bell();
+    // 라운드 끝에 걸린 신호도 마무리해서 점수에 넣습니다.
+    const judge = judgeRef.current;
+    if (judge) {
+      judge.flush();
+      showJudged(judge.takeFresh(), performance.now());
+    }
     if (roundRef.current < st.rounds) {
       go('rest');
     } else {
       returnRef.current.flush();
       const r = returnRef.current.summary();
-      const res = { signals: signalCountRef.current, ...r, rounds: roundRef.current };
+      const action = judge ? judge.summary() : null;
+      const res: Summary = {
+        signals: signalCountRef.current,
+        measured: st.measuring ? r.measured : 0,
+        returned: st.measuring ? r.returned : 0,
+        rate: st.measuring ? r.rate : null,
+        rounds: roundRef.current,
+        action,
+      };
       setSummary(res);
       addCallerRound({
         at: Date.now(),
         level: st.level,
-        rounds: roundRef.current,
+        rounds: res.rounds,
         signals: res.signals,
-        measured: st.measuring ? r.measured : 0,
-        returned: st.measuring ? r.returned : 0,
-        rate: st.measuring ? r.rate : null,
+        measured: res.measured,
+        returned: res.returned,
+        rate: res.rate,
+        stance: judge && st.stance ? st.stance : undefined,
+        action,
       });
       go('result');
     }
-  }, [go]);
+  }, [go, showJudged]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -128,6 +209,10 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
           hideAtRef.current = 0;
           setShown(null);
         }
+        if (feedbackUntilRef.current && t >= feedbackUntilRef.current) {
+          feedbackUntilRef.current = 0;
+          setFeedback(null);
+        }
         const remain = st.roundSec * 1000 - el;
         if (t >= nextAtRef.current && remain > 1200) {
           const kind = pickNextSignal(st.level, recentRef.current);
@@ -135,9 +220,13 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
           signalCountRef.current += 1;
           shownIdRef.current += 1;
           setShown({ kind, id: shownIdRef.current });
-          if (SIGNALS[kind].attack && st.measuring) returnRef.current.onAttackSignal(t);
-          if (st.sound) beep(SIGNAL_TONE[kind], 140);
+          // 앞 신호의 판정 글자가 새 신호와 겹쳐 헷갈리지 않게 지웁니다. (점수는 위쪽 숫자에 남아요)
+          feedbackUntilRef.current = 0;
+          setFeedback(null);
           const ms = st.intervalSec * 1000;
+          if (SIGNALS[kind].attack && st.measuring) returnRef.current.onAttackSignal(t);
+          judgeRef.current?.onSignal(t, kind, ms);
+          if (st.sound) beep(SIGNAL_TONE[kind], 140);
           hideAtRef.current = t + Math.min(1300, ms - 500);
           nextAtRef.current = t + Math.max(1800, ms + (Math.random() - 0.5) * 600);
         }
@@ -164,6 +253,12 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
     recentRef.current = [];
     returnRef.current = new ReturnTracker();
     smootherRef.current.reset();
+    const st = settingsRef.current;
+    judgeRef.current = st.judging && st.stance ? new ActionJudge(st.stance) : null;
+    liveRef.current = { correct: 0, judged: 0 };
+    setLive({ correct: 0, judged: 0 });
+    feedbackUntilRef.current = 0;
+    setFeedback(null);
     setShown(null);
     setSummary(null);
     countdownMsRef.current = 5000;
@@ -237,17 +332,44 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
               )}
             </AnimatePresence>
             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-6">
-              <span className="rounded-2xl bg-black/25 px-5 py-3 text-[3.2vh] font-extrabold text-white backdrop-blur">
-                라운드 {roundIndex}/{rounds}
+              <span className="flex items-center gap-3">
+                <span className="rounded-2xl bg-black/25 px-5 py-3 text-[3.2vh] font-extrabold text-white backdrop-blur">
+                  라운드 {roundIndex}/{rounds}
+                </span>
+                {settingsRef.current.judging && (
+                  <span className="tabular flex items-center gap-1.5 rounded-2xl bg-black/25 px-5 py-3 text-[3.2vh] font-extrabold text-white backdrop-blur">
+                    <Check className="h-[3.2vh] w-[3.2vh]" strokeWidth={3} />
+                    {live.correct} / {live.judged}
+                  </span>
+                )}
               </span>
               <span className="tabular rounded-2xl bg-black/25 px-5 py-3 text-[6vh] leading-none font-black text-white backdrop-blur">
                 {Math.floor(remain / 60)}:{String(remain % 60).padStart(2, '0')}
               </span>
             </div>
-            {settingsRef.current.measuring && (
+            <AnimatePresence>
+              {feedback && (
+                <motion.div
+                  key={feedback.id}
+                  initial={{ opacity: 0, y: 24, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="pointer-events-none absolute inset-x-0 bottom-[6vh] flex justify-center"
+                >
+                  <span
+                    className={`flex items-center gap-3 rounded-full bg-white px-8 py-4 text-[5vh] leading-none font-black shadow-md ${feedback.ok ? 'text-mint-600' : 'text-rose-500'}`}
+                  >
+                    {feedback.ok ? <Check className="h-[6vh] w-[6vh]" strokeWidth={3.5} /> : <X className="h-[6vh] w-[6vh]" strokeWidth={3.5} />}
+                    {feedback.text}
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {camera && (
               <span className="absolute right-6 bottom-6 flex items-center gap-2 rounded-2xl bg-black/25 px-4 py-2 text-sm font-bold text-white backdrop-blur">
                 <span className={`h-3 w-3 rounded-full ${visible ? 'bg-mint-300' : 'bg-slate-400'}`} />
-                {visible ? '가드 복귀 측정 중' : '몸이 안 보여요'}
+                {visible ? 'AI가 동작을 보고 있어요' : '몸이 안 보여요'}
               </span>
             )}
           </div>
@@ -293,7 +415,8 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
           <CallerResult
             summary={summary}
             level={level}
-            measuring={measure && !!baseline}
+            stance={camera ? stance : null}
+            measuring={camera && !!baseline}
             onAgain={start}
             onLevelUp={
               level < 3
@@ -394,53 +517,93 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
               <Card className="space-y-4">
                 <div className="flex items-center gap-2">
                   <Camera className="h-6 w-6 text-mint-600" />
-                  <h2 className="text-xl font-extrabold">가드 복귀율 측정</h2>
+                  <h2 className="text-xl font-extrabold">AI 동작 판정</h2>
                 </div>
-                {baseline ? (
+                <Toggle
+                  checked={camera}
+                  onChange={(v) => {
+                    setCamera(v);
+                    prefs.setCallerCamera(v);
+                  }}
+                  label="카메라로 동작 점수 매기기"
+                  hint="신호대로 움직였는지 AI가 봐요. 영상은 저장하지 않아요."
+                />
+                {camera && (
                   <>
-                    <Toggle checked={measure} onChange={setMeasure} label="카메라로 가드 복귀 측정" hint="라운드 중에는 경고 없이 조용히 재요" />
-                    {measure && (
-                      <div className="relative h-40 overflow-hidden rounded-2xl">
-                        {video}
-                        {status !== 'ready' && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-canvas p-4 text-center">
-                            {status === 'loading' ? (
-                              <>
-                                <div className="skeleton h-12 w-12 rounded-full" />
-                                <div className="skeleton h-4 w-40 rounded-full" />
-                                <span className="text-sm font-bold text-mint-700">AI 자세 인식 준비 중</span>
-                              </>
-                            ) : (
-                              <>
-                                <span className="text-sm font-bold text-rose-600">{error}</span>
-                                <Button size="md" onClick={retry}>
-                                  다시 시도
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                        {status === 'ready' && (
-                          <span className="absolute bottom-2 left-2 rounded-xl bg-black/40 px-3 py-1 text-sm font-bold text-white">
-                            {visible ? '몸이 잘 보여요' : '표시 자리에 서면 확인돼요'}
-                          </span>
-                        )}
+                    <div className="space-y-2">
+                      <div className="font-bold">
+                        내 앞손 {!stance && <span className="text-rose-500">· 먼저 골라 주세요</span>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(['orthodox', 'southpaw'] as Stance[]).map((k) => {
+                          const on = stance === k;
+                          const h = HANDS[k];
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => {
+                                setStance(k);
+                                prefs.setStance(k);
+                              }}
+                              className={`pressable rounded-2xl p-4 text-left ${on ? 'bg-mint-500 text-white shadow-md shadow-mint-500/25' : 'bg-slate-50 hover:bg-slate-100'}`}
+                            >
+                              <div className="text-lg font-extrabold">{h.title}</div>
+                              <div className={`text-sm ${on ? 'text-mint-50' : 'text-ink-soft'}`}>
+                                {h.who} · 잽 {h.lead}, 스트레이트 {h.rear}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-sm text-ink-soft">설 때 앞에 나온 발과 같은 쪽 손이 앞손이에요.</p>
+                    </div>
+                    <div className="relative h-40 overflow-hidden rounded-2xl">
+                      {video}
+                      {status !== 'ready' && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-canvas p-4 text-center">
+                          {status === 'loading' ? (
+                            <>
+                              <div className="skeleton h-12 w-12 rounded-full" />
+                              <div className="skeleton h-4 w-40 rounded-full" />
+                              <span className="text-sm font-bold text-mint-700">AI 자세 인식 준비 중</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-sm font-bold text-rose-600">{error}</span>
+                              <Button size="md" onClick={retry}>
+                                다시 시도
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {status === 'ready' && (
+                        <span className="absolute bottom-2 left-2 rounded-xl bg-black/40 px-3 py-1 text-sm font-bold text-white">
+                          {visible ? '몸이 잘 보여요' : '표시 자리에 서면 확인돼요'}
+                        </span>
+                      )}
+                    </div>
+                    {baseline ? (
+                      <p className="rounded-2xl bg-mint-50 px-4 py-3 text-sm font-bold text-mint-700">
+                        내 가드가 등록되어 있어서 펀치 뒤 가드 복귀율도 함께 재요.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+                        <p className="flex-1 text-sm text-ink-soft">가드 체크에서 내 가드를 등록하면 가드 복귀율도 잴 수 있어요.</p>
+                        <Button variant="white" size="md" onClick={onGoGuard}>
+                          가드 등록하기
+                        </Button>
                       </div>
                     )}
                   </>
-                ) : (
-                  <div className="rounded-2xl bg-mint-50 p-5">
-                    <p className="font-bold text-mint-700">가드 체크에서 내 가드를 먼저 등록하면 펀치 후 가드 복귀율도 잴 수 있어요.</p>
-                    <Button variant="white" size="md" className="mt-3" onClick={onGoGuard}>
-                      가드 등록하러 가기
-                    </Button>
-                  </div>
                 )}
               </Card>
 
-              <Button size="xl" className="w-full" onClick={start} disabled={measure && !!baseline && status === 'loading'}>
+              <Button size="xl" className="w-full" onClick={start} disabled={camera && (status === 'loading' || !stance)}>
                 <Play className="h-7 w-7" /> 시작
               </Button>
+              {camera && !stance && <p className="text-center font-bold text-rose-500">내 앞손을 고르면 시작할 수 있어요.</p>}
               <p className="text-center text-sm text-ink-soft">시작을 누르면 5초 동안 표시 자리로 가서 가드 자세를 잡아요.</p>
             </div>
           </>
@@ -519,58 +682,143 @@ export function SignalView({ kind, hideWords, compact = false }: { kind: SignalK
   );
 }
 
+const KIND_TIP: Record<SignalKind, (h: (typeof HANDS)[Stance] | null) => string> = {
+  jab: (h) => `앞손${h ? `(${h.lead})` : ''}으로 곧게 뻗었다가 바로 당겨 보세요.`,
+  straight: (h) => `뒷손${h ? `(${h.rear})` : ''}을 허리를 돌리며 끝까지 쭉 뻗어 보세요.`,
+  onetwo: () => '앞손 → 뒷손 순서로, 두 번 모두 끝까지 뻗어 보세요.',
+  slipLeft: () => '발은 그대로 두고 상체만 왼쪽으로 기울여 보세요.',
+  slipRight: () => '발은 그대로 두고 상체만 오른쪽으로 기울여 보세요.',
+  duck: () => '무릎을 굽혀 머리 높이를 확 낮춰 보세요.',
+};
+
 function CallerResult({
   summary,
   level,
+  stance,
   measuring,
   onAgain,
   onLevelUp,
   onSettings,
   onRecord,
 }: {
-  summary: { signals: number; measured: number; returned: number; rate: number | null; rounds: number };
+  summary: Summary;
   level: Level;
+  stance: Stance | null;
   measuring: boolean;
   onAgain: () => void;
   onLevelUp?: () => void;
   onSettings: () => void;
   onRecord: () => void;
 }) {
-  let tip = '신호를 보고 바로 움직였나요? 다음에는 단어 숨기기에 도전해 보세요.';
-  if (measuring && summary.rate !== null) {
-    if (summary.rate >= 0.8) tip = '펀치 뒤에 가드로 잘 돌아왔어요! 레벨을 올려 볼까요?';
-    else if (summary.rate >= 0.5) tip = '절반 넘게 돌아왔어요. 뻗은 주먹을 "같은 길로" 빨리 당겨 와 봐요.';
-    else tip = '펀치 뒤에 손이 내려가 있었어요. 신호 간격을 늘려서 천천히 연습해 봐요.';
-  } else if (measuring) {
-    tip = '몸이 잘 보이지 않아 복귀율을 재지 못했어요. 서는 자리를 확인해 주세요.';
+  const a = summary.action;
+  const hands = stance ? HANDS[stance] : null;
+  const kinds = a ? KIND_ORDER.filter((k) => (a.perKind[k]?.judged ?? 0) > 0) : [];
+
+  // 가장 약한 동작 (2번 이상 판정된 것 중 정확도가 가장 낮은 것)
+  const weakest = a
+    ? kinds
+        .map((k) => ({ k, ...a.perKind[k]! }))
+        .filter((v) => v.judged >= 2 && v.correct / v.judged < 0.6)
+        .sort((x, y) => x.correct / x.judged - y.correct / y.judged)[0]
+    : undefined;
+
+  const tips: string[] = [];
+  if (a && a.accuracy !== null) {
+    if (a.accuracy >= 0.8) tips.push('신호대로 정확하게 움직였어요! 단어 숨기기나 레벨 올리기에 도전해 보세요.');
+    else if (weakest) tips.push(`더 연습할 동작: ${KIND_NAME[weakest.k]}. ${KIND_TIP[weakest.k](hands)}`);
+    else tips.push('신호를 끝까지 보고, 크고 분명하게 움직여 보세요.');
+  } else if (a) {
+    tips.push('몸이 잘 보이지 않아 동작을 판정하지 못했어요. 표시 자리에 서서 머리부터 엉덩이까지 화면에 나오게 해 주세요.');
+  } else {
+    tips.push('신호를 보고 바로 움직였나요? 다음에는 단어 숨기기에 도전해 보세요.');
   }
+  if (measuring && summary.rate !== null) {
+    if (summary.rate >= 0.8) tips.push('펀치 뒤에 가드로도 잘 돌아왔어요.');
+    else if (summary.rate >= 0.5) tips.push('펀치 뒤 가드 복귀: 뻗은 주먹을 "같은 길로" 빨리 당겨 와 봐요.');
+    else tips.push('펀치 뒤에 손이 내려가 있었어요. 신호 간격을 늘려서 천천히 연습해 봐요.');
+  }
+
+  const actionSub = !a
+    ? '카메라를 끄고 했어요'
+    : a.accuracy === null
+      ? '몸이 잘 안 보여 판정하지 못했어요'
+      : `판정 ${a.judged}번 중 ${a.correct}번 정답${a.unknown ? ` · 판정 불가 ${a.unknown}번` : ''}`;
+
   return (
     <div className="space-y-5 md:col-span-2">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h2 className="text-2xl font-extrabold">
-          {LEVELS[level].name} 결과 · 라운드 {summary.rounds}번
+          {LEVELS[level].name} 결과 · 라운드 {summary.rounds}번 · 신호 {summary.signals}개
         </h2>
+        {hands && (
+          <span className="rounded-xl bg-white px-3 py-1.5 text-sm font-bold text-ink-soft shadow-sm">
+            앞손: {hands.lead} ({hands.who})
+          </span>
+        )}
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
+        <Stat
+          label="동작 점수"
+          value={a && a.accuracy !== null ? pct(a.accuracy) : '-'}
+          sub={actionSub}
+          tone={a && a.accuracy !== null && a.accuracy < 0.6 ? 'rose' : 'mint'}
+        />
+        <Stat
+          label="평균 반응 시간"
+          value={a ? sec(a.avgReactionMs) : '-'}
+          sub="신호가 나오고 맞게 움직이기까지"
+          tone="slate"
+        />
         <Stat
           label="가드 복귀율"
           value={measuring && summary.rate !== null ? pct(summary.rate) : '-'}
           sub={
             !measuring
-              ? '측정하지 않았어요'
+              ? '내 가드를 등록하면 잴 수 있어요'
               : summary.rate === null
                 ? '몸이 잘 안 보여 재지 못했어요'
                 : `공격 신호 ${summary.measured}번 중 ${summary.returned}번 돌아왔어요`
           }
           tone={summary.rate !== null && summary.rate < 0.6 ? 'rose' : 'mint'}
         />
-        <Stat label="받은 신호" value={`${summary.signals}개`} tone="slate" />
-        <Stat label="레벨" value={String(level)} sub={LEVELS[level].desc} tone="slate" />
       </div>
-      <Card className="bg-mint-50 shadow-none">
-        <p className="text-lg font-bold text-mint-700">{tip}</p>
-        <p className="mt-2 text-sm text-ink-soft">공격 신호 뒤 1.5초 안에 가드로 돌아왔는지 AI가 잰 값이에요. 참고용으로 써 주세요.</p>
-      </Card>
+
+      {kinds.length > 0 && a && (
+        <Card className="space-y-3">
+          <h3 className="text-lg font-extrabold">동작별 정확도</h3>
+          {kinds.map((k) => {
+            const v = a.perKind[k]!;
+            const r = v.correct / v.judged;
+            return (
+              <div key={k} className="flex items-center gap-3">
+                <span className="w-28 shrink-0">
+                  <MiniChip kind={k} />
+                </span>
+                <div className="h-3 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-200 ${r >= 0.6 ? 'bg-mint-500' : 'bg-rose-400'}`}
+                    style={{ width: `${Math.round(r * 100)}%` }}
+                  />
+                </div>
+                <span className="tabular w-24 text-right text-sm font-bold">
+                  {v.correct}/{v.judged} · {pct(r)}
+                </span>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      <div className="space-y-2 rounded-2xl bg-mint-50 p-6">
+        {tips.map((t) => (
+          <p key={t} className="text-lg font-bold text-mint-700">
+            {t}
+          </p>
+        ))}
+        <p className="text-sm text-ink-soft">
+          AI 판정은 참고용이에요. 카메라 각도나 옷, 조명 때문에 다르게 볼 수 있어요. 판정이 이상하면 선생님께 알려 주세요.
+        </p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-4">
         <Button onClick={onAgain}>
           <RotateCcw className="h-5 w-5" /> 다시 하기

@@ -1,6 +1,7 @@
 // 태블릿 안(localStorage)에만 저장합니다. 서버로 보내지 않습니다.
 import type { Baseline } from '../pose/guard.ts';
-import type { Level } from '../caller/signals.ts';
+import { SIGNALS, type Level, type SignalKind } from '../caller/signals.ts';
+import { STANCE_LABEL, mergeSummaries, type JudgeSummary, type Stance } from '../caller/actionJudge.ts';
 
 export type GuardRound = {
   at: number;
@@ -20,6 +21,10 @@ export type CallerRound = {
   measured: number;
   returned: number;
   rate: number | null;
+  /** 앞손 설정 (동작 판정을 켠 경우) */
+  stance?: Stance;
+  /** 신호대로 동작했는지 판정한 결과 (카메라를 끈 경우 null) */
+  action?: JudgeSummary | null;
 };
 
 export const CHECKLIST = [
@@ -142,12 +147,38 @@ export function summarizeCaller(rounds: CallerRound[]) {
   const measured = rounds.reduce((s, r) => s + r.measured, 0);
   const returned = rounds.reduce((s, r) => s + r.returned, 0);
   if (!rounds.length) return null;
+  const actions = rounds.map((r) => r.action).filter((a): a is JudgeSummary => !!a);
+  const stance = [...rounds].reverse().find((r) => r.stance)?.stance ?? null;
   return {
     measured,
     returned,
     rate: measured > 0 ? returned / measured : null,
     maxLevel: Math.max(...rounds.map((r) => r.level)) as Level,
+    action: mergeSummaries(actions),
+    stance,
   };
+}
+
+/** 반응 시간 표시: 0.62초 */
+export const sec = (ms: number | null | undefined) => (ms === null || ms === undefined ? '-' : `${(ms / 1000).toFixed(2)}초`);
+
+/** 동작별 이름 (슬립은 방향까지) */
+export const KIND_NAME: Record<SignalKind, string> = {
+  jab: SIGNALS.jab.label,
+  straight: SIGNALS.straight.label,
+  onetwo: SIGNALS.onetwo.label,
+  slipLeft: '왼쪽 슬립',
+  slipRight: '오른쪽 슬립',
+  duck: SIGNALS.duck.label,
+};
+export const KIND_ORDER: SignalKind[] = ['jab', 'straight', 'onetwo', 'slipLeft', 'slipRight', 'duck'];
+
+/** 동작 점수 한 줄: "75% (판정 12번 중 9번 정답, 평균 반응 0.62초)" */
+export function actionLine(a: JudgeSummary | null | undefined): string {
+  if (!a) return '측정 안 함';
+  if (a.accuracy === null) return '판정 안 됨 (몸이 잘 안 보였어요)';
+  const rt = a.avgReactionMs !== null ? `, 평균 반응 ${sec(a.avgReactionMs)}` : '';
+  return `${pct(a.accuracy)} (판정 ${a.judged}번 중 ${a.correct}번 정답${rt})`;
 }
 
 /** 구글 폼·클래스룸에 붙여 넣을 요약 글 */
@@ -166,8 +197,17 @@ export function buildCopyText(rec: SessionRecord): string {
   }
   const c = summarizeCaller(rec.caller);
   if (c) {
+    lines.push(`■ 섀도 반응 콜러: 최고 레벨 ${c.maxLevel}${c.stance ? ` · ${STANCE_LABEL[c.stance]}` : ''}`);
+    lines.push(`  - 동작 점수: ${actionLine(c.action)}`);
+    if (c.action) {
+      const parts = KIND_ORDER.filter((k) => c.action?.perKind[k]?.judged).map((k) => {
+        const v = c.action!.perKind[k]!;
+        return `${KIND_NAME[k]} ${v.correct}/${v.judged}`;
+      });
+      if (parts.length) lines.push(`  - 동작별: ${parts.join(', ')}`);
+    }
     lines.push(
-      `■ 섀도 반응 콜러: 최고 레벨 ${c.maxLevel} · 가드 복귀율 ${c.rate === null ? '측정 안 됨' : `${pct(c.rate)} (공격 신호 ${c.measured}번 중 ${c.returned}번)`}`,
+      `  - 가드 복귀율: ${c.rate === null ? '측정 안 됨' : `${pct(c.rate)} (공격 신호 ${c.measured}번 중 ${c.returned}번)`}`,
     );
   } else {
     lines.push('■ 섀도 반응 콜러: 기록 없음');

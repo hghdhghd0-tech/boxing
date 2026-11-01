@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- 이 앱은 밖으로 데이터를 보내지 않습니다. 자세 인식 모델 파일을 받는 주소만 허용하고,
+         MediaPipe 라이브러리에 들어 있는 사용 통계 전송(odml.pa.googleapis.com)도 여기서 막습니다. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="connect-src 'self' blob: data: https://storage.googleapis.com/mediapipe-models/"
+    />
     <meta name="theme-color" content="#10B981" />
     <meta name="description" content="AI 자세 인식으로 복싱 가드를 스스로 점검하는 수업 앱" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />

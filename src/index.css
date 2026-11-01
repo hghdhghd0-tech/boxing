@@ -1,0 +1,87 @@
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+
+  /* 기본 색 (민트) */
+  --color-mint-50: #ecfdf5;
+  --color-mint-100: #d1fae5;
+  --color-mint-200: #a7f3d0;
+  --color-mint-300: #6ee7b7;
+  --color-mint-500: #10b981;
+  --color-mint-600: #059669;
+  --color-mint-700: #047857;
+
+  /* 배경 */
+  --color-canvas: #f8fafc;
+  --color-ink: #0f172a;
+  --color-ink-soft: #475569;
+
+  /* 신호 색 (테일윈드 기본 파랑을 쓰지 않습니다) */
+  --color-jab: #e5484d;
+  --color-straight: #2f4bdb;
+  --color-defense: #f5a524;
+  --color-warn: #e5484d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* 버튼·카드 공통 촉감: 마우스를 올리면 살짝 떠오르고, 누르면 살짝 작아집니다. */
+@utility pressable {
+  transition-property: all;
+  transition-duration: 200ms;
+  cursor: pointer;
+  user-select: none;
+  &:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.03);
+  }
+  &:active {
+    transform: scale(0.95);
+  }
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* 스켈레톤(뼈대) 로딩 */
+@utility skeleton {
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shine 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shine {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.mirror {
+  transform: scaleX(-1);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

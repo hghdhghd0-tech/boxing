@@ -1,0 +1,8 @@
+node_modules
+dist
+*.log
+.DS_Store
+
+# 빌드할 때 자동으로 준비되는 자세 인식 파일 (용량이 커서 저장소에 올리지 않아요)
+public/mediapipe/
+public/models/

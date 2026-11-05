@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { BUILD_ID } from '../lib/pwa.ts';
 import { ChevronRight, Lock, NotebookPen, Shield, ShieldCheck, Zap } from 'lucide-react';
 import { getBaseline, getStudentId, getToday } from '../storage/records.ts';
 
@@ -139,6 +140,8 @@ export function Home({ onOpen }: { onOpen: (s: ScreenId) => void }) {
           </p>
         </div>
       </section>
+
+      <p className="text-center text-xs text-slate-400">버전 {BUILD_ID}</p>
     </div>
   );
 }

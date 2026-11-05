@@ -289,18 +289,18 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
         {video}
         {step === 'countdown' && (
           <div className="flex h-full flex-col items-center justify-center gap-6 bg-canvas">
-            <div className="text-[5vh] font-extrabold text-ink-soft">
+            <div className="text-[5vmin] font-extrabold text-ink-soft">
               라운드 {roundIndex} / {rounds} · {LEVELS[level].name}
             </div>
             <motion.div
               key={Math.ceil((countdownMsRef.current - el) / 1000)}
               initial={{ scale: 1.4, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="tabular text-[40vh] leading-none font-black text-mint-500"
+              className="tabular text-[40vmin] leading-none font-black text-mint-500"
             >
               {Math.max(1, Math.ceil((countdownMsRef.current - el) / 1000))}
             </motion.div>
-            <div className="rounded-2xl bg-white px-8 py-4 text-[4vh] font-extrabold shadow-md">표시 자리로 가서 가드!</div>
+            <div className="rounded-2xl bg-white px-8 py-4 text-[4vmin] font-extrabold shadow-md">표시 자리로 가서 가드!</div>
           </div>
         )}
 
@@ -327,23 +327,23 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                   transition={{ duration: 0.08 }}
                   className="absolute inset-0 flex items-center justify-center bg-canvas"
                 >
-                  <span className="text-[9vh] font-black text-mint-200">가드</span>
+                  <span className="text-[9vmin] font-black text-mint-200">가드</span>
                 </motion.div>
               )}
             </AnimatePresence>
             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-6">
               <span className="flex items-center gap-3">
-                <span className="rounded-2xl bg-black/25 px-5 py-3 text-[3.2vh] font-extrabold text-white backdrop-blur">
+                <span className="rounded-2xl bg-black/25 px-5 py-3 text-[3.2vmin] font-extrabold text-white backdrop-blur">
                   라운드 {roundIndex}/{rounds}
                 </span>
                 {settingsRef.current.judging && (
-                  <span className="tabular flex items-center gap-1.5 rounded-2xl bg-black/25 px-5 py-3 text-[3.2vh] font-extrabold text-white backdrop-blur">
-                    <Check className="h-[3.2vh] w-[3.2vh]" strokeWidth={3} />
+                  <span className="tabular flex items-center gap-1.5 rounded-2xl bg-black/25 px-5 py-3 text-[3.2vmin] font-extrabold text-white backdrop-blur">
+                    <Check className="h-[3.2vmin] w-[3.2vmin]" strokeWidth={3} />
                     {live.correct} / {live.judged}
                   </span>
                 )}
               </span>
-              <span className="tabular rounded-2xl bg-black/25 px-5 py-3 text-[6vh] leading-none font-black text-white backdrop-blur">
+              <span className="tabular rounded-2xl bg-black/25 px-5 py-3 text-[6vmin] leading-none font-black text-white backdrop-blur">
                 {Math.floor(remain / 60)}:{String(remain % 60).padStart(2, '0')}
               </span>
             </div>
@@ -355,12 +355,12 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.15 }}
-                  className="pointer-events-none absolute inset-x-0 bottom-[6vh] flex justify-center"
+                  className="pointer-events-none absolute inset-x-0 bottom-[6vmin] flex justify-center"
                 >
                   <span
-                    className={`flex items-center gap-3 rounded-full bg-white px-8 py-4 text-[5vh] leading-none font-black shadow-md ${feedback.ok ? 'text-mint-600' : 'text-rose-500'}`}
+                    className={`flex items-center gap-3 rounded-full bg-white px-8 py-4 text-[5vmin] leading-none font-black shadow-md ${feedback.ok ? 'text-mint-600' : 'text-rose-500'}`}
                   >
-                    {feedback.ok ? <Check className="h-[6vh] w-[6vh]" strokeWidth={3.5} /> : <X className="h-[6vh] w-[6vh]" strokeWidth={3.5} />}
+                    {feedback.ok ? <Check className="h-[6vmin] w-[6vmin]" strokeWidth={3.5} /> : <X className="h-[6vmin] w-[6vmin]" strokeWidth={3.5} />}
                     {feedback.text}
                   </span>
                 </motion.div>
@@ -377,9 +377,9 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
 
         {step === 'rest' && (
           <div className="flex h-full flex-col items-center justify-center gap-4 bg-mint-500 text-white">
-            <div className="text-[8vh] font-black">휴식</div>
-            <div className="tabular text-[30vh] leading-none font-black">{Math.max(0, Math.ceil(restSec - el / 1000))}</div>
-            <div className="text-[4vh] font-bold text-mint-50">
+            <div className="text-[8vmin] font-black">휴식</div>
+            <div className="tabular text-[30vmin] leading-none font-black">{Math.max(0, Math.ceil(restSec - el / 1000))}</div>
+            <div className="text-[4vmin] font-bold text-mint-50">
               다음: 라운드 {roundIndex + 1} / {rounds} · 숨 고르고 가드 준비
             </div>
           </div>
@@ -635,9 +635,9 @@ function MiniChip({ kind }: { kind: SignalKind }) {
 /** 화면 가득 신호를 보여 줍니다. compact는 안내용 작은 크기 */
 export function SignalView({ kind, hideWords, compact = false }: { kind: SignalKind; hideWords: boolean; compact?: boolean }) {
   const info = SIGNALS[kind];
-  const big = compact ? 'text-2xl' : 'text-[24vh]';
-  const sub = compact ? 'text-xs' : 'text-[5.5vh]';
-  const icon = compact ? 'h-8 w-8' : 'h-[38vh] w-[38vh]';
+  const big = compact ? 'text-2xl' : 'text-[24vmin]';
+  const sub = compact ? 'text-xs' : 'text-[5.5vmin]';
+  const icon = compact ? 'h-8 w-8' : 'h-[38vmin] w-[38vmin]';
   const words = !hideWords;
 
   if (kind === 'onetwo') {

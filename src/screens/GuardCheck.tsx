@@ -4,7 +4,7 @@ import { CheckCircle2, Hand, NotebookPen, RotateCcw, Shield, Square, Timer, Tria
 import { GUARD } from '../config.ts';
 import { Button, Card, Choice, ScreenHeader, Stat, Toggle } from '../components/ui.tsx';
 import { CameraStage, type Tone } from '../components/CameraStage.tsx';
-import { GuardFigure, SetupGuide } from '../components/Illustrations.tsx';
+import { GuardFigure } from '../components/Illustrations.tsx';
 import { drawPose } from '../pose/drawPose.ts';
 import {
   GuardTracker,
@@ -283,7 +283,7 @@ export function GuardCheck({ onExit, onGoRecord }: { onExit: () => void; onGoRec
   return (
     <div className="flex h-full flex-col">
       <ScreenHeader title="가드 체크" onBack={onExit} />
-      <main className="grid min-h-0 flex-1 gap-5 px-6 pb-6 md:grid-cols-[1.35fr_1fr]">
+      <main className={`grid min-h-0 flex-1 gap-5 px-6 pb-6 ${step === 'intro' ? 'md:grid-cols-[1.8fr_1fr]' : 'md:grid-cols-[1.35fr_1fr]'}`}>
         <div className="min-h-[260px]">{camera}</div>
 
         <div className="min-h-0 overflow-y-auto">
@@ -294,7 +294,7 @@ export function GuardCheck({ onExit, onGoRecord }: { onExit: () => void; onGoRec
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2 }}
-              className="space-y-5"
+              className={step === 'intro' ? 'h-full' : 'space-y-5'}
             >
               {step === 'intro' && <Intro onStart={startRegister} />}
 
@@ -381,33 +381,40 @@ export function GuardCheck({ onExit, onGoRecord }: { onExit: () => void; onGoRec
   );
 }
 
+const INTRO_STEPS = [
+  { title: '태블릿 세우기', desc: '바닥에 세워 화면이 살짝 위를 보게' },
+  { title: '표시 자리에 서기', desc: '2.5~3m 뒤, 머리부터 엉덩이까지 보이게' },
+  { title: '가드 잡고 3초 멈추기', desc: '주먹은 턱 옆, 팔꿈치는 옆구리' },
+];
+
 function Intro({ onStart }: { onStart: () => void }) {
   return (
-    <>
-      <Card className="space-y-4">
-        <h2 className="text-xl font-extrabold">1. 태블릿 세우기</h2>
-        <SetupGuide className="mx-auto max-h-36 w-full" />
-        <ul className="space-y-1 text-ink-soft">
-          <li>· 태블릿을 바닥에 세워 화면이 살짝 위를 보게 두어요.</li>
-          <li>· 2.5~3m 떨어진 표시 자리에 서요. 머리부터 허벅지까지 보이면 돼요.</li>
-        </ul>
-      </Card>
-      <Card className="space-y-4">
-        <h2 className="text-xl font-extrabold">2. 내 가드 등록하기</h2>
-        <div className="flex items-center gap-4">
-          <GuardFigure className="h-28 w-auto shrink-0" />
-          <ul className="space-y-1 text-ink-soft">
-            <li>· 주먹은 턱 옆에</li>
-            <li>· 팔꿈치는 옆구리에</li>
-            <li>· 턱은 살짝 당기기</li>
-            <li>· 3초 동안 그대로 멈추면 등록 끝!</li>
-          </ul>
+    <Card className="flex max-h-full flex-col gap-3 p-5">
+      <div className="flex shrink-0 items-center gap-3">
+        <GuardFigure className="h-12 w-auto shrink-0" />
+        <div>
+          <h2 className="text-lg font-extrabold">내 가드 등록</h2>
+          <p className="text-sm text-ink-soft">처음 한 번, 3단계면 끝나요</p>
         </div>
-        <Button size="xl" className="w-full" onClick={onStart}>
-          <Shield className="h-7 w-7" /> 가드 등록 시작
-        </Button>
-      </Card>
-    </>
+      </div>
+      {/* 화면이 작으면 이 목록만 스크롤되고, 시작 버튼은 항상 보입니다 */}
+      <ol className="min-h-0 space-y-1.5 overflow-y-auto">
+        {INTRO_STEPS.map((st, i) => (
+          <li key={st.title} className="flex items-start gap-3 rounded-xl bg-slate-50 px-3 py-2">
+            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-mint-500 text-sm font-extrabold text-white">
+              {i + 1}
+            </span>
+            <span className="leading-snug">
+              <span className="block font-bold">{st.title}</span>
+              <span className="block text-sm text-ink-soft">{st.desc}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <Button size="lg" className="w-full shrink-0" onClick={onStart}>
+        <Shield className="h-6 w-6" /> 가드 등록 시작
+      </Button>
+    </Card>
   );
 }
 
@@ -417,7 +424,7 @@ function BigNumber({ n }: { n: number }) {
       key={n}
       initial={{ scale: 1.4, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
-      className="tabular text-[26vh] leading-none font-black text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
+      className="tabular text-[20vh] leading-none font-black text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
     >
       {n}
     </motion.div>
@@ -427,7 +434,7 @@ function BigNumber({ n }: { n: number }) {
 /** 안내 글은 모두 화면 왼쪽에 모읍니다. 가운데(학생이 서는 자리)는 비워 두어 내 모습이 보이게 합니다. */
 function SidePanel({ children }: { children: ReactNode }) {
   return (
-    <div className="absolute top-6 left-6 flex max-h-[calc(100%-7.5rem)] w-[27vw] max-w-[440px] min-w-[260px] flex-col gap-[1.6vh] overflow-hidden rounded-2xl bg-white/90 p-6 shadow-md backdrop-blur">
+    <div className="absolute top-4 left-4 flex max-h-[calc(100%-6.5rem)] w-[22vw] max-w-[340px] min-w-[200px] flex-col gap-2 overflow-hidden rounded-2xl bg-white/85 p-4 shadow-md backdrop-blur">
       {children}
     </div>
   );
@@ -436,7 +443,7 @@ function SidePanel({ children }: { children: ReactNode }) {
 /** 오른쪽 가운데에 큰 숫자 (가운데를 가리지 않게) */
 function SideNumber({ n }: { n: number }) {
   return (
-    <div className="absolute top-1/2 right-[3vw] flex min-w-[22vh] -translate-y-1/2 justify-center rounded-3xl bg-black/35 px-[2vw] py-[2vh] backdrop-blur">
+    <div className="absolute top-1/2 right-[3vw] flex min-w-[16vh] -translate-y-1/2 justify-center rounded-3xl bg-black/35 px-[1.5vw] py-[1.5vh] backdrop-blur">
       <BigNumber n={n} />
     </div>
   );
@@ -444,7 +451,7 @@ function SideNumber({ n }: { n: number }) {
 
 function StepLabel({ n, label }: { n: number; label: string }) {
   return (
-    <div className="text-[2.6vh] font-bold text-ink-soft">
+    <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">
       내 가드 등록 {n}/3 · {label}
     </div>
   );
@@ -476,13 +483,12 @@ function StageOverlay({
       {step === 'setup' && (
         <SidePanel>
           <StepLabel n={1} label="자리 잡기" />
-          <div className={`text-[4.6vh] leading-tight font-black ${live.ready ? 'text-mint-600' : 'text-ink'}`}>{live.hint}</div>
-          <div className="text-[2.6vh] font-bold text-ink-soft">표시 자리에서 머리부터 엉덩이까지 보이게</div>
-          <div className="flex flex-wrap gap-2">
+          <div className={`text-[clamp(18px,3.4vh,30px)] leading-tight font-black ${live.ready ? 'text-mint-600' : 'text-ink'}`}>{live.hint}</div>
+          <div className="flex flex-wrap gap-1">
             {GROUPS.map((g, i) => (
               <span
                 key={g.label}
-                className={`rounded-xl px-3 py-1.5 text-[2.4vh] font-extrabold ${live.groups[i] ? 'bg-mint-500 text-white' : 'bg-slate-200 text-slate-500'}`}
+                className={`rounded-lg px-2 py-0.5 text-[clamp(11px,1.8vh,15px)] font-bold ${live.groups[i] ? 'bg-mint-500 text-white' : 'bg-slate-200 text-slate-500'}`}
               >
                 {g.label}
               </span>
@@ -496,10 +502,10 @@ function StageOverlay({
           <SidePanel>
             <StepLabel n={2} label="가드 잡기" />
             <div className="flex items-center gap-4">
-              <GuardFigure className="h-[16vh] w-auto shrink-0" />
-              <div className="text-[4.6vh] leading-tight font-black">가드 잡고 멈춰요</div>
+              <GuardFigure className="h-[10vh] max-h-20 w-auto shrink-0" />
+              <div className="text-[clamp(18px,3.4vh,30px)] leading-tight font-black">가드 잡고 멈춰요</div>
             </div>
-            <div className="text-[2.8vh] font-bold text-ink-soft">주먹은 턱 옆, 팔꿈치는 옆구리</div>
+            <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">주먹은 턱 옆, 팔꿈치는 옆구리</div>
           </SidePanel>
           <SideNumber n={Math.max(1, 3 - Math.floor(el / 1000))} />
         </>
@@ -513,7 +519,7 @@ function StageOverlay({
           </div>
           <SidePanel>
             <StepLabel n={3} label="멈추기" />
-            <div className="text-[5.5vh] leading-tight font-black text-mint-600">그대로 멈춰요!</div>
+            <div className="text-[clamp(20px,3.8vh,34px)] leading-tight font-black text-mint-600">그대로 멈춰요!</div>
             <div className="h-4 overflow-hidden rounded-full bg-slate-200">
               <div className="h-full rounded-full bg-mint-500 transition-all duration-100" style={{ width: `${Math.min(100, (el / GUARD.registerMs) * 100)}%` }} />
             </div>
@@ -524,24 +530,24 @@ function StageOverlay({
       {step === 'regFail' && fail && (
         <SidePanel>
           <div className="flex items-center gap-3">
-            <TriangleAlert className="h-[5vh] w-[5vh] shrink-0 text-rose-500" />
-            <div className="text-[4.2vh] leading-tight font-black">{FAIL_TITLE[fail.reason]}</div>
+            <TriangleAlert className="h-[clamp(20px,3.6vh,32px)] w-[clamp(20px,3.6vh,32px)] shrink-0 text-rose-500" />
+            <div className="text-[clamp(17px,3.2vh,28px)] leading-tight font-black">{FAIL_TITLE[fail.reason]}</div>
           </div>
           {fail.reason === 'minimum' ? (
             <>
-              <ul className="space-y-1 text-[3.8vh] leading-tight font-extrabold text-rose-600">
+              <ul className="space-y-1 text-[clamp(16px,2.9vh,26px)] leading-tight font-extrabold text-rose-600">
                 {fail.issues.map((i) => (
                   <li key={`${i.side}-${i.kind}`}>{i.message}</li>
                 ))}
               </ul>
-              <div className="text-[2.6vh] font-bold text-ink-soft">화면에 빨갛게 표시된 관절을 고쳐요</div>
+              <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">화면에 빨갛게 표시된 관절을 고쳐요</div>
             </>
           ) : (
-            <div className="text-[3vh] font-bold text-ink-soft">
+            <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">
               {fail.reason === 'moving' ? '3초 동안 가드 자세 그대로 멈춰 주세요' : '표시 자리에서 몸 전체가 보이게 서 주세요'}
             </div>
           )}
-          <div className="text-[2.6vh] text-ink-soft">{Math.max(1, Math.ceil(5 - el / 1000))}초 뒤에 다시 해요</div>
+          <div className="text-[clamp(12px,2vh,17px)] text-ink-soft">{Math.max(1, Math.ceil(5 - el / 1000))}초 뒤에 다시 해요</div>
         </SidePanel>
       )}
 
@@ -549,10 +555,10 @@ function StageOverlay({
         <motion.div initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}>
           <SidePanel>
             <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-[7vh] w-[7vh] shrink-0 text-mint-500" />
-              <div className="text-[5.5vh] font-black">등록 완료!</div>
+              <CheckCircle2 className="h-[clamp(24px,4.5vh,40px)] w-[clamp(24px,4.5vh,40px)] shrink-0 text-mint-500" />
+              <div className="text-[clamp(20px,3.8vh,34px)] font-black">등록 완료!</div>
             </div>
-            <div className="text-[3vh] font-bold text-ink-soft">태블릿으로 와서 미션을 골라요</div>
+            <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">태블릿으로 와서 미션을 골라요</div>
           </SidePanel>
         </motion.div>
       )}
@@ -560,9 +566,9 @@ function StageOverlay({
       {step === 'roundCountdown' && (
         <>
           <SidePanel>
-            <div className="text-[4.6vh] leading-tight font-black">{missionName}</div>
-            <div className="text-[2.8vh] font-bold text-ink-soft">{missionDesc}</div>
-            <div className="text-[3.4vh] font-extrabold text-mint-600">표시 자리로 가서 가드!</div>
+            <div className="text-[clamp(18px,3.4vh,30px)] leading-tight font-black">{missionName}</div>
+            <div className="text-[clamp(12px,2vh,17px)] font-bold text-ink-soft">{missionDesc}</div>
+            <div className="text-[clamp(15px,2.6vh,22px)] font-extrabold text-mint-600">표시 자리로 가서 가드!</div>
           </SidePanel>
           <SideNumber n={Math.max(1, 5 - Math.floor(el / 1000))} />
         </>

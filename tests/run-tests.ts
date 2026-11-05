@@ -145,6 +145,22 @@ test('손을 어깨 아래로 내리면 손 무너짐', () => {
   assert(e.handBad && !e.elbowBad && e.badJoints.includes('rWrist'), JSON.stringify(e));
 });
 
+test('등록: 팔꿈치를 조금 벌린 자세(어깨너비의 0.35)는 거부', () => {
+  // 이 테스트 자세의 어깨너비는 정규화 x로 0.16 → 0.35S 바깥으로 벌림
+  const dx = 0.35 * 0.16;
+  const issues = checkRegisterMinimum(metrics({ lElbow: [0.573 + dx, 0.52] }));
+  assert(issues.some((i) => i.kind === 'elbowOut' && i.side === 'left'), JSON.stringify(issues));
+});
+test('라운드: 팔꿈치를 조금만(어깨너비의 0.2) 벌려도 무너짐', () => {
+  const dx = 0.2 * 0.16;
+  const e = evaluate(metrics({ lElbow: [0.573 + dx, 0.52] }), base);
+  assert(e.elbowBad && e.badJoints.includes('lElbow'), JSON.stringify(e));
+});
+test('라운드: 팔꿈치가 살짝(어깨너비의 0.08) 흔들린 것은 무너짐 아님', () => {
+  const dx = 0.08 * 0.16;
+  const e = evaluate(metrics({ lElbow: [0.573 + dx, 0.52] }), base);
+  assert(!e.elbowBad, JSON.stringify(e));
+});
 test('팔꿈치만 벌리면 팔꿈치 무너짐', () => {
   const e = evaluate(metrics({ lElbow: [0.68, 0.48] }), base);
   assert(!e.handBad && e.elbowBad && e.badJoints.includes('lElbow'), JSON.stringify(e));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2, Hand, NotebookPen, RotateCcw, Shield, Square, Timer, TriangleAlert } from 'lucide-react';
 import { GUARD } from '../config.ts';
@@ -417,10 +417,36 @@ function BigNumber({ n }: { n: number }) {
       key={n}
       initial={{ scale: 1.4, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
-      className="tabular text-[34vh] leading-none font-black text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
+      className="tabular text-[26vh] leading-none font-black text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
     >
       {n}
     </motion.div>
+  );
+}
+
+/** 안내 글은 모두 화면 왼쪽에 모읍니다. 가운데(학생이 서는 자리)는 비워 두어 내 모습이 보이게 합니다. */
+function SidePanel({ children }: { children: ReactNode }) {
+  return (
+    <div className="absolute top-6 left-6 flex max-h-[calc(100%-7.5rem)] w-[27vw] max-w-[440px] min-w-[260px] flex-col gap-[1.6vh] overflow-hidden rounded-2xl bg-white/90 p-6 shadow-md backdrop-blur">
+      {children}
+    </div>
+  );
+}
+
+/** 오른쪽 가운데에 큰 숫자 (가운데를 가리지 않게) */
+function SideNumber({ n }: { n: number }) {
+  return (
+    <div className="absolute top-1/2 right-[3vw] flex min-w-[22vh] -translate-y-1/2 justify-center rounded-3xl bg-black/35 px-[2vw] py-[2vh] backdrop-blur">
+      <BigNumber n={n} />
+    </div>
+  );
+}
+
+function StepLabel({ n, label }: { n: number; label: string }) {
+  return (
+    <div className="text-[2.6vh] font-bold text-ink-soft">
+      내 가드 등록 {n}/3 · {label}
+    </div>
   );
 }
 
@@ -444,108 +470,126 @@ function StageOverlay({
   onStop: () => void;
 }) {
   const remain = Math.max(0, Math.ceil(seconds - el / 1000));
-  const pill = 'rounded-2xl bg-white/95 px-8 py-5 shadow-md backdrop-blur';
+  const pill = 'rounded-2xl bg-white/90 px-6 py-4 shadow-md backdrop-blur';
   return (
-    <div className="absolute inset-0 flex flex-col p-8">
+    <div className="absolute inset-0">
       {step === 'setup' && (
-        <>
-          <div className={`${pill} self-center text-center`}>
-            <div className="text-[5vh] font-extrabold">표시 자리에 서서 몸이 다 보이게</div>
-            <div className={`text-[4vh] font-bold ${live.ready ? 'text-mint-600' : 'text-ink-soft'}`}>{live.hint}</div>
-          </div>
-          <div className="mt-auto flex justify-center gap-3">
+        <SidePanel>
+          <StepLabel n={1} label="자리 잡기" />
+          <div className={`text-[4.6vh] leading-tight font-black ${live.ready ? 'text-mint-600' : 'text-ink'}`}>{live.hint}</div>
+          <div className="text-[2.6vh] font-bold text-ink-soft">표시 자리에서 머리부터 엉덩이까지 보이게</div>
+          <div className="flex flex-wrap gap-2">
             {GROUPS.map((g, i) => (
               <span
                 key={g.label}
-                className={`rounded-2xl px-5 py-3 text-[3vh] font-extrabold shadow-md ${live.groups[i] ? 'bg-mint-500 text-white' : 'bg-white/90 text-slate-400'}`}
+                className={`rounded-xl px-3 py-1.5 text-[2.4vh] font-extrabold ${live.groups[i] ? 'bg-mint-500 text-white' : 'bg-slate-200 text-slate-500'}`}
               >
                 {g.label}
               </span>
             ))}
           </div>
-        </>
+        </SidePanel>
       )}
 
       {step === 'countdown' && (
-        <div className="m-auto flex items-center gap-10">
-          <div className={`${pill} flex flex-col items-center`}>
-            <GuardFigure className="h-[30vh] w-auto" />
-            <div className="mt-2 text-[4vh] font-extrabold">가드 자세를 잡고 멈춰요</div>
-          </div>
-          <BigNumber n={Math.max(1, 3 - Math.floor(el / 1000))} />
-        </div>
+        <>
+          <SidePanel>
+            <StepLabel n={2} label="가드 잡기" />
+            <div className="flex items-center gap-4">
+              <GuardFigure className="h-[16vh] w-auto shrink-0" />
+              <div className="text-[4.6vh] leading-tight font-black">가드 잡고 멈춰요</div>
+            </div>
+            <div className="text-[2.8vh] font-bold text-ink-soft">주먹은 턱 옆, 팔꿈치는 옆구리</div>
+          </SidePanel>
+          <SideNumber n={Math.max(1, 3 - Math.floor(el / 1000))} />
+        </>
       )}
 
       {step === 'collect' && (
-        <div className={`${pill} m-auto w-[60vw] text-center`}>
-          <div className="text-[6vh] font-black text-mint-600">그대로 멈춰요!</div>
-          <div className="mt-4 h-5 overflow-hidden rounded-full bg-slate-200">
-            <div className="h-full rounded-full bg-mint-500 transition-all duration-100" style={{ width: `${Math.min(100, (el / GUARD.registerMs) * 100)}%` }} />
+        <>
+          {/* 멀리서도 보이게 화면 맨 위에 얇은 진행 막대 */}
+          <div className="absolute inset-x-0 top-0 h-3 bg-white/30">
+            <div className="h-full bg-mint-500 transition-all duration-100" style={{ width: `${Math.min(100, (el / GUARD.registerMs) * 100)}%` }} />
           </div>
-        </div>
+          <SidePanel>
+            <StepLabel n={3} label="멈추기" />
+            <div className="text-[5.5vh] leading-tight font-black text-mint-600">그대로 멈춰요!</div>
+            <div className="h-4 overflow-hidden rounded-full bg-slate-200">
+              <div className="h-full rounded-full bg-mint-500 transition-all duration-100" style={{ width: `${Math.min(100, (el / GUARD.registerMs) * 100)}%` }} />
+            </div>
+          </SidePanel>
+        </>
       )}
 
       {step === 'regFail' && fail && (
-        <div className={`${pill} m-auto max-w-[70vw] text-center`}>
-          <TriangleAlert className="mx-auto h-[8vh] w-[8vh] text-rose-500" />
-          <div className="text-[6vh] font-black">{FAIL_TITLE[fail.reason]}</div>
+        <SidePanel>
+          <div className="flex items-center gap-3">
+            <TriangleAlert className="h-[5vh] w-[5vh] shrink-0 text-rose-500" />
+            <div className="text-[4.2vh] leading-tight font-black">{FAIL_TITLE[fail.reason]}</div>
+          </div>
           {fail.reason === 'minimum' ? (
-            <ul className="mt-2 space-y-1 text-[4.5vh] font-extrabold text-rose-600">
-              {fail.issues.map((i) => (
-                <li key={`${i.side}-${i.kind}`}>{i.message}</li>
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-1 text-[3.8vh] leading-tight font-extrabold text-rose-600">
+                {fail.issues.map((i) => (
+                  <li key={`${i.side}-${i.kind}`}>{i.message}</li>
+                ))}
+              </ul>
+              <div className="text-[2.6vh] font-bold text-ink-soft">화면에 빨갛게 표시된 관절을 고쳐요</div>
+            </>
           ) : (
-            <div className="text-[4vh] font-bold text-ink-soft">
+            <div className="text-[3vh] font-bold text-ink-soft">
               {fail.reason === 'moving' ? '3초 동안 가드 자세 그대로 멈춰 주세요' : '표시 자리에서 몸 전체가 보이게 서 주세요'}
             </div>
           )}
-          <div className="mt-3 text-[3vh] text-ink-soft">{Math.max(1, Math.ceil(5 - el / 1000))}초 뒤에 다시 해요</div>
-        </div>
+          <div className="text-[2.6vh] text-ink-soft">{Math.max(1, Math.ceil(5 - el / 1000))}초 뒤에 다시 해요</div>
+        </SidePanel>
       )}
 
       {step === 'regDone' && (
-        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className={`${pill} m-auto text-center`}>
-          <CheckCircle2 className="mx-auto h-[12vh] w-[12vh] text-mint-500" />
-          <div className="text-[7vh] font-black">등록 완료!</div>
-          <div className="text-[3.5vh] font-bold text-ink-soft">태블릿으로 와서 미션을 골라요</div>
+        <motion.div initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}>
+          <SidePanel>
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-[7vh] w-[7vh] shrink-0 text-mint-500" />
+              <div className="text-[5.5vh] font-black">등록 완료!</div>
+            </div>
+            <div className="text-[3vh] font-bold text-ink-soft">태블릿으로 와서 미션을 골라요</div>
+          </SidePanel>
         </motion.div>
       )}
 
       {step === 'roundCountdown' && (
-        <div className="m-auto flex flex-col items-center gap-4">
-          <div className={`${pill} text-center`}>
-            <div className="text-[5vh] font-black">{missionName}</div>
-            <div className="text-[3.2vh] font-bold text-ink-soft">{missionDesc}</div>
-          </div>
-          <BigNumber n={Math.max(1, 5 - Math.floor(el / 1000))} />
-          <div className={`${pill} text-[3.5vh] font-extrabold`}>표시 자리로 가서 가드!</div>
-        </div>
+        <>
+          <SidePanel>
+            <div className="text-[4.6vh] leading-tight font-black">{missionName}</div>
+            <div className="text-[2.8vh] font-bold text-ink-soft">{missionDesc}</div>
+            <div className="text-[3.4vh] font-extrabold text-mint-600">표시 자리로 가서 가드!</div>
+          </SidePanel>
+          <SideNumber n={Math.max(1, 5 - Math.floor(el / 1000))} />
+        </>
       )}
 
       {step === 'round' && (
         <>
-          <div className="flex items-start justify-between">
-            <div className={`${pill} text-[3.5vh] font-extrabold`}>{missionName}</div>
-            <div className={`${pill} tabular text-[8vh] leading-none font-black`}>
-              {Math.floor(remain / 60)}:{String(remain % 60).padStart(2, '0')}
-            </div>
+          <div className={`${pill} absolute top-6 left-6 text-[3.5vh] font-extrabold`}>{missionName}</div>
+          <div className={`${pill} tabular absolute top-6 right-6 text-[8vh] leading-none font-black`}>
+            {Math.floor(remain / 60)}:{String(remain % 60).padStart(2, '0')}
           </div>
-          <div className="m-auto">
+          {/* 경고는 아래쪽에: 손·팔꿈치가 가려지지 않게 */}
+          <div className="absolute inset-x-0 bottom-[3vh] flex justify-center">
             {live.unknown ? (
-              <div className="rounded-2xl bg-defense px-10 py-6 text-[5vh] font-black text-ink shadow-md">상체가 다 보이게 서 주세요</div>
+              <div className="rounded-2xl bg-defense px-8 py-4 text-[4.5vh] font-black text-ink shadow-md">상체가 다 보이게 서 주세요</div>
             ) : live.warnHand || live.warnElbow ? (
               <motion.div
                 initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
-                className="flex flex-col items-center gap-2 rounded-2xl bg-warn px-14 py-8 text-center text-white shadow-md"
+                className="flex items-center gap-[3vw] rounded-2xl bg-warn px-10 py-4 text-white shadow-md"
               >
                 {live.warnHand && (
-                  <span className="flex items-center gap-4 text-[11vh] leading-none font-black">
-                    <Hand className="h-[10vh] w-[10vh]" /> 손 올려!
+                  <span className="flex items-center gap-3 text-[9vh] leading-none font-black">
+                    <Hand className="h-[8vh] w-[8vh]" /> 손 올려!
                   </span>
                 )}
-                {live.warnElbow && <span className="text-[11vh] leading-none font-black">팔꿈치 붙여!</span>}
+                {live.warnElbow && <span className="text-[9vh] leading-none font-black">팔꿈치 붙여!</span>}
               </motion.div>
             ) : null}
           </div>
@@ -555,7 +599,7 @@ function StageOverlay({
       <button
         type="button"
         onClick={onStop}
-        className="pressable absolute bottom-6 left-6 flex items-center gap-2 rounded-2xl bg-white/90 px-5 py-3 text-lg font-bold text-ink shadow-md"
+        className="pressable absolute bottom-6 left-6 z-10 flex items-center gap-2 rounded-2xl bg-white/90 px-5 py-3 text-lg font-bold text-ink shadow-md"
       >
         <Square className="h-5 w-5" /> 그만
       </button>

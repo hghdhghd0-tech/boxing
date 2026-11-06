@@ -360,10 +360,10 @@ test('슬립 방향이 반대면 오답', () => {
   const r = judgeOnce('orthodox', 'slipLeft', [shiftUpper(-0.08, 0.01, 300)]);
   assert(r.detected === 'slipRight' && r.correct === false, JSON.stringify(r));
 });
-test('덕킹', () => expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)]), 'duck'));
+test('더킹', () => expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)]), 'duck'));
 test('좌우 스텝은 슬립이 아님', () => expectDetect(judgeOnce('orthodox', 'slipLeft', [shiftUpper(0.08, 0, 300, true)]), 'none'));
 test('손을 어깨 아래로 내리면 펀치가 아님', () => expectDetect(judgeOnce('orthodox', 'jab', [dropHand(300)]), 'none'));
-test('느린 태블릿(1초에 5장면)에서도 잽·덕킹을 알아본다', () => {
+test('느린 태블릿(1초에 5장면)에서도 잽·더킹을 알아본다', () => {
   expectDetect(judgeOnce('orthodox', 'jab', [punch('l', 300)], 0.95, 200), 'jab');
   expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)], 0.95, 200), 'duck');
   expectDetect(judgeOnce('orthodox', 'jab', [], 0.95, 200), 'none');

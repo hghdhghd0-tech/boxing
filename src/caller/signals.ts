@@ -16,7 +16,7 @@ export const SIGNALS: Record<SignalKind, SignalInfo> = {
   onetwo: { kind: 'onetwo', label: '원투', sub: '잽 + 스트레이트', attack: true },
   slipLeft: { kind: 'slipLeft', label: '슬립', sub: '왼쪽으로 피하기', attack: false },
   slipRight: { kind: 'slipRight', label: '슬립', sub: '오른쪽으로 피하기', attack: false },
-  duck: { kind: 'duck', label: '덕킹', sub: '숙여 피하기', attack: false },
+  duck: { kind: 'duck', label: '더킹', sub: '숙여 피하기', attack: false },
 };
 
 export const LEVELS: Record<Level, { name: string; desc: string; pool: SignalKind[]; weights: number[] }> = {

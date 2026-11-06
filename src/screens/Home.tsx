@@ -82,7 +82,7 @@ export function Home({ onOpen }: { onOpen: (s: ScreenId) => void }) {
         <MenuCard
           icon={<Zap className="h-8 w-8" />}
           title="섀도 반응 콜러"
-          desc="색과 화살표를 보고 잽 · 스트레이트 · 원투 · 슬립 · 덕킹! 펀치 뒤 가드 복귀율도 재요."
+          desc="색과 화살표를 보고 잽 · 스트레이트 · 원투 · 슬립 · 더킹! 펀치 뒤 가드 복귀율도 재요."
           tag="2차시부터"
           accent={
             <div className="flex h-2">

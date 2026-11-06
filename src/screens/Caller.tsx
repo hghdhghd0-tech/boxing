@@ -6,6 +6,7 @@ import { LEVELS, SIGNALS, pickNextSignal, type Level, type SignalKind } from '..
 import { ActionJudge, type Detected, type JudgeResult, type JudgeSummary, type Stance } from '../caller/actionJudge.ts';
 import { MetricsSmoother, ReturnTracker, computeMetrics, evaluate, type Baseline, type Landmark } from '../pose/guard.ts';
 import { usePoseCamera } from '../pose/usePoseCamera.ts';
+import { drawPose } from '../pose/drawPose.ts';
 import { KIND_NAME, KIND_ORDER, addCallerRound, getBaseline, pct, sec } from '../storage/records.ts';
 import { prefs } from '../lib/prefs.ts';
 import { beep, bell, keepScreenOn, toggleFullscreen, unlockAudio } from '../lib/device.ts';
@@ -29,8 +30,14 @@ const HANDS: Record<Stance, { lead: string; rear: string; title: string; who: st
 };
 
 /** 틀렸을 때 화면에 보여 줄 말 */
+function judgedText(r: JudgeResult): string {
+  if (r.correct) return r.reactionMs !== null ? `좋아요! ${sec(r.reactionMs)}` : '좋아요!';
+  if (r.early) return '너무 빨라요! 신호 보고 움직여요';
+  return wrongText(r.detected);
+}
+
 function wrongText(d: Detected | 'unknown'): string {
-  if (d === 'none') return '동작이 안 보였어요';
+  if (d === 'none') return '시간 안에 동작이 안 보였어요';
   if (d === 'other') return '뒷손이 먼저 나갔어요';
   if (d === 'unknown') return '';
   return `보인 동작: ${KIND_NAME[d]}`;
@@ -79,6 +86,9 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
   const returnRef = useRef(new ReturnTracker());
   const smootherRef = useRef(new MetricsSmoother());
   const judgeRef = useRef<ActionJudge | null>(null);
+  /** 지금 떠 있는 신호의 판정 시간 (시작 시각, 길이) */
+  const windowRef = useRef<{ t0: number; ms: number } | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const feedbackIdRef = useRef(0);
   const feedbackUntilRef = useRef(0);
   const liveRef = useRef({ correct: 0, judged: 0 });
@@ -116,11 +126,20 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
     const last = judged[judged.length - 1];
     feedbackIdRef.current += 1;
     feedbackUntilRef.current = t + 1100;
-    setFeedback({ id: feedbackIdRef.current, ok: !!last.correct, text: last.correct ? '좋아요!' : wrongText(last.detected) });
+    setFeedback({ id: feedbackIdRef.current, ok: !!last.correct, text: judgedText(last) });
+    // 지금 신호가 판정되면 신호를 바로 내리고 "가드"로 (= 가드로 돌아오라는 뜻)
+    if (windowRef.current && judged.some((r) => r.t0 === windowRef.current?.t0)) {
+      windowRef.current = null;
+      hideAtRef.current = 0;
+      setShown(null);
+    }
   }, []);
 
   const onFrame = useCallback(
-    (lm: Landmark[] | null, t: number, aspect: number) => {
+    (lm: Landmark[] | null, t: number, aspect: number, videoEl?: HTMLVideoElement) => {
+      // 라운드 화면에서 내 모습 위에 관절 선을 그립니다.
+      const cur = stepRef.current;
+      if (cur === 'countdown' || cur === 'run' || cur === 'rest') drawPose(canvasRef.current, videoEl ?? null, lm);
       const m = computeMetrics(lm, aspect);
       const vis = !!m;
       if (vis !== visibleRef.current) {
@@ -207,6 +226,7 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
         }
         if (hideAtRef.current && t >= hideAtRef.current) {
           hideAtRef.current = 0;
+          windowRef.current = null;
           setShown(null);
         }
         if (feedbackUntilRef.current && t >= feedbackUntilRef.current) {
@@ -225,9 +245,17 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
           setFeedback(null);
           const ms = st.intervalSec * 1000;
           if (SIGNALS[kind].attack && st.measuring) returnRef.current.onAttackSignal(t);
-          judgeRef.current?.onSignal(t, kind, ms);
+          const judge = judgeRef.current;
+          if (judge) {
+            // 판정하는 동안(판정 시간)만 신호를 보여 줍니다. 신호가 떠 있는 동안 동작하면 돼요.
+            const win = judge.onSignal(t, kind, ms);
+            windowRef.current = { t0: t, ms: win };
+            hideAtRef.current = t + win;
+          } else {
+            windowRef.current = null;
+            hideAtRef.current = t + Math.min(1300, ms - 500);
+          }
           if (st.sound) beep(SIGNAL_TONE[kind], 140);
-          hideAtRef.current = t + Math.min(1300, ms - 500);
           nextAtRef.current = t + Math.max(1800, ms + (Math.random() - 0.5) * 600);
         }
       } else if (s === 'rest' && el >= st.restSec * 1000) {
@@ -267,6 +295,8 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
 
   const el = Math.max(0, now - stepStartRef.current);
   const running = step === 'countdown' || step === 'run' || step === 'rest';
+  const countNum = Math.max(1, Math.ceil((countdownMsRef.current - el) / 1000));
+  const restNum = Math.max(0, Math.ceil(restSec - el / 1000));
 
   // 카메라 영상: 설정 화면에서는 작은 미리보기, 라운드 중에는 숨겨 둔 채로 측정만 합니다.
   const video = (
@@ -277,10 +307,151 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
       className={
         step === 'settings'
           ? 'mirror h-full w-full rounded-2xl bg-slate-900 object-cover'
-          : 'pointer-events-none fixed right-0 bottom-0 h-24 w-32 opacity-[0.01]'
+          : running && camera
+            ? 'mirror absolute inset-0 h-full w-full object-cover'
+            : 'pointer-events-none fixed right-0 bottom-0 h-24 w-32 opacity-[0.01]'
       }
     />
   );
+
+  if (running && camera) {
+    const remain = Math.max(0, Math.ceil(settingsRef.current.roundSec - el / 1000));
+    const border = step === 'run' && shown ? SIGNAL_BORDER[shown.kind] : 'border-transparent';
+    return (
+      <div className="fixed inset-0 z-40 flex bg-ink select-none portrait:flex-col">
+        {/* 내 모습(거울) + 관절 선 */}
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-900">
+          {video}
+          <canvas ref={canvasRef} className="mirror pointer-events-none absolute inset-0 h-full w-full object-cover" />
+          {/* 신호 색 테두리: 내 모습을 보면서도 곁눈으로 신호 색이 보이게 */}
+          <div className={`pointer-events-none absolute inset-0 border-[1.8vmin] transition-colors duration-75 ${border}`} />
+          {status !== 'ready' && (
+            <div className="absolute inset-0 flex items-center justify-center text-[3vmin] font-bold text-white/80">
+              {status === 'loading' ? 'AI 자세 인식 준비 중…' : '카메라를 켜지 못했어요'}
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-[2.5vmin]">
+            <div className="flex flex-col items-start gap-2">
+              <span className="flex items-center gap-2">
+                <span className="rounded-xl bg-black/40 px-3 py-1.5 text-[2.6vmin] font-extrabold text-white backdrop-blur">
+                  라운드 {roundIndex}/{rounds}
+                </span>
+                {settingsRef.current.judging && (
+                  <span className="tabular flex items-center gap-1 rounded-xl bg-black/40 px-3 py-1.5 text-[2.6vmin] font-extrabold text-white backdrop-blur">
+                    <Check className="h-[2.6vmin] w-[2.6vmin]" strokeWidth={3} />
+                    {live.correct} / {live.judged}
+                  </span>
+                )}
+              </span>
+              <span className="flex items-center gap-2 rounded-xl bg-black/40 px-3 py-1 text-[2vmin] font-bold text-white backdrop-blur">
+                <span className={`h-[1.6vmin] w-[1.6vmin] rounded-full ${visible ? 'bg-mint-300' : 'bg-slate-400'}`} />
+                {visible ? 'AI가 보고 있어요' : '몸이 안 보여요'}
+              </span>
+            </div>
+            {step !== 'rest' && (
+              <span className="tabular rounded-xl bg-black/40 px-4 py-2 text-[5vmin] leading-none font-black text-white backdrop-blur">
+                {step === 'run' ? `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, '0')}` : '준비'}
+              </span>
+            )}
+          </div>
+          <AnimatePresence>
+            {feedback && (
+              <motion.div
+                key={feedback.id}
+                initial={{ opacity: 0, y: 16, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="pointer-events-none absolute inset-x-0 bottom-[4vmin] flex justify-center"
+              >
+                <span
+                  className={`flex items-center gap-2 rounded-full bg-white px-6 py-3 text-[4vmin] leading-none font-black shadow-md ${feedback.ok ? 'text-mint-600' : 'text-rose-500'}`}
+                >
+                  {feedback.ok ? <Check className="h-[4.5vmin] w-[4.5vmin]" strokeWidth={3.5} /> : <X className="h-[4.5vmin] w-[4.5vmin]" strokeWidth={3.5} />}
+                  {feedback.text}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <button
+            type="button"
+            onClick={() => {
+              setShown(null);
+              go('settings');
+            }}
+            className="pressable absolute bottom-[2.5vmin] left-[2.5vmin] flex items-center gap-2 rounded-xl bg-white/90 px-4 py-2 font-bold text-ink shadow-md"
+          >
+            <Square className="h-4 w-4" /> 그만
+          </button>
+        </div>
+
+        {/* 신호 판: 가로 화면은 오른쪽, 세로 화면은 아래 */}
+        <div className="relative shrink-0 overflow-hidden [container-type:size] landscape:h-full landscape:w-[36%] portrait:h-[34%] portrait:w-full">
+          {step === 'countdown' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-[3cqmin] bg-canvas text-center">
+              <div className="text-[min(5cqw,6cqh)] font-extrabold text-ink-soft">
+                라운드 {roundIndex}/{rounds} · {LEVELS[level].name}
+              </div>
+              <motion.div
+                key={countNum}
+                initial={{ scale: 1.3, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="tabular text-[min(42cqw,42cqh)] leading-none font-black text-mint-500"
+              >
+                {countNum}
+              </motion.div>
+              <div className="text-[min(6cqw,7cqh)] font-extrabold">표시 자리로 가서 가드!</div>
+            </div>
+          )}
+          {step === 'run' && (
+            <AnimatePresence>
+              {shown ? (
+                <motion.div
+                  key={shown.id}
+                  initial={{ opacity: 0.4 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.08 }}
+                  className="absolute inset-0"
+                >
+                  <SignalView kind={shown.kind} hideWords={hideWords} variant="panel" />
+                  {windowRef.current && (
+                    // 남은 판정 시간: 막대가 다 줄기 전에 동작하면 성공
+                    <div className="absolute inset-x-[10%] bottom-[7%] h-[min(5cqh,4.5cqw)] overflow-hidden rounded-full bg-black/25">
+                      <div
+                        className="h-full rounded-full bg-white"
+                        style={{ width: `${Math.max(0, 1 - (now - windowRef.current.t0) / windowRef.current.ms) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="idle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.08 }}
+                  className="absolute inset-0 flex items-center justify-center bg-canvas"
+                >
+                  <span className="text-[min(16cqw,20cqh)] font-black text-mint-200">가드</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
+          {step === 'rest' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-[2cqmin] bg-mint-500 text-center text-white">
+              <div className="text-[min(10cqw,12cqh)] font-black">휴식</div>
+              <div className="tabular text-[min(36cqw,36cqh)] leading-none font-black">{restNum}</div>
+              <div className="text-[min(5cqw,6cqh)] font-bold text-mint-50">
+                다음: 라운드 {roundIndex + 1}/{rounds} · 가드 준비
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (running) {
     const remain = Math.max(0, Math.ceil(settingsRef.current.roundSec - el / 1000));
@@ -293,12 +464,12 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
               라운드 {roundIndex} / {rounds} · {LEVELS[level].name}
             </div>
             <motion.div
-              key={Math.ceil((countdownMsRef.current - el) / 1000)}
+              key={countNum}
               initial={{ scale: 1.4, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="tabular text-[40vmin] leading-none font-black text-mint-500"
             >
-              {Math.max(1, Math.ceil((countdownMsRef.current - el) / 1000))}
+              {countNum}
             </motion.div>
             <div className="rounded-2xl bg-white px-8 py-4 text-[4vmin] font-extrabold shadow-md">표시 자리로 가서 가드!</div>
           </div>
@@ -316,7 +487,7 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                   transition={{ duration: 0.08 }}
                   className="absolute inset-0"
                 >
-                  <SignalView kind={shown.kind} hideWords={hideWords} />
+                  <SignalView kind={shown.kind} hideWords={hideWords} variant="full" />
                 </motion.div>
               ) : (
                 <motion.div
@@ -378,7 +549,7 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
         {step === 'rest' && (
           <div className="flex h-full flex-col items-center justify-center gap-4 bg-mint-500 text-white">
             <div className="text-[8vmin] font-black">휴식</div>
-            <div className="tabular text-[30vmin] leading-none font-black">{Math.max(0, Math.ceil(restSec - el / 1000))}</div>
+            <div className="tabular text-[30vmin] leading-none font-black">{restNum}</div>
             <div className="text-[4vmin] font-bold text-mint-50">
               다음: 라운드 {roundIndex + 1} / {rounds} · 숨 고르고 가드 준비
             </div>
@@ -466,7 +637,7 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                   {(['jab', 'straight', 'onetwo', 'slipLeft', 'slipRight', 'duck'] as SignalKind[]).map((k) => (
                     <div key={k} className="overflow-hidden rounded-2xl shadow-sm">
                       <div className="relative h-20">
-                        <SignalView kind={k} hideWords={false} compact />
+                        <SignalView kind={k} hideWords={false} variant="compact" />
                       </div>
                     </div>
                   ))}
@@ -526,7 +697,7 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                     prefs.setCallerCamera(v);
                   }}
                   label="카메라로 동작 점수 매기기"
-                  hint="신호대로 움직였는지 AI가 봐요. 영상은 저장하지 않아요."
+                  hint="라운드 중 내 모습을 보며 연습하고, 신호대로 움직였는지 AI가 봐요. 영상은 저장하지 않아요."
                 />
                 {camera && (
                   <>
@@ -557,6 +728,15 @@ export function Caller({ onExit, onGoRecord, onGoGuard }: { onExit: () => void; 
                         })}
                       </div>
                       <p className="text-sm text-ink-soft">설 때 앞에 나온 발과 같은 쪽 손이 앞손이에요.</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-relaxed">
+                      <div className="mb-1 font-extrabold">언제 동작하면 성공일까요?</div>
+                      <div>
+                        신호가 <b>뜬 뒤에</b> 움직이고, 신호 아래 <b>흰 막대가 다 줄기 전</b>(약 1.7초)에 동작하면 성공이에요.
+                      </div>
+                      <div className="text-ink-soft">
+                        신호보다 먼저 움직이면 "너무 빨라요", 막대가 끝나면 "시간 안에 동작이 안 보였어요"가 떠요. 성공하면 바로 "가드"로 돌아와요.
+                      </div>
                     </div>
                     <div className="relative h-40 overflow-hidden rounded-2xl">
                       {video}
@@ -633,11 +813,35 @@ function MiniChip({ kind }: { kind: SignalKind }) {
 }
 
 /** 화면 가득 신호를 보여 줍니다. compact는 안내용 작은 크기 */
-export function SignalView({ kind, hideWords, compact = false }: { kind: SignalKind; hideWords: boolean; compact?: boolean }) {
+/** 신호 테두리 색 (내 모습 화면 둘레) */
+const SIGNAL_BORDER: Record<SignalKind, string> = {
+  jab: 'border-jab',
+  straight: 'border-straight',
+  onetwo: 'border-jab border-r-straight border-b-straight',
+  slipLeft: 'border-defense',
+  slipRight: 'border-defense',
+  duck: 'border-defense',
+};
+
+type SignalVariant = 'full' | 'panel' | 'compact';
+const SIZE: Record<SignalVariant, { big: string; sub: string; icon: string; gap: string; dir: string }> = {
+  // 화면 가득 (카메라를 끈 경우)
+  full: { big: 'text-[24vmin]', sub: 'text-[5.5vmin]', icon: 'h-[38vmin] w-[38vmin]', gap: 'gap-[4vw]', dir: 'flex-row' },
+  // 신호 판 (내 모습과 함께): 판 크기에 맞춰 글자 크기를 정합니다
+  panel: {
+    big: 'text-[min(19cqw,30cqh)]',
+    sub: 'text-[min(5.5cqw,8cqh)]',
+    icon: 'h-[min(40cqw,30cqh)] w-[min(40cqw,30cqh)]',
+    gap: 'gap-[3cqmin]',
+    dir: 'landscape:flex-col portrait:flex-row',
+  },
+  // 설정 화면의 작은 미리보기
+  compact: { big: 'text-2xl', sub: 'text-xs', icon: 'h-8 w-8', gap: 'gap-1', dir: 'flex-row' },
+};
+
+export function SignalView({ kind, hideWords, variant = 'full' }: { kind: SignalKind; hideWords: boolean; variant?: SignalVariant }) {
   const info = SIGNALS[kind];
-  const big = compact ? 'text-2xl' : 'text-[24vmin]';
-  const sub = compact ? 'text-xs' : 'text-[5.5vmin]';
-  const icon = compact ? 'h-8 w-8' : 'h-[38vmin] w-[38vmin]';
+  const { big, sub, icon, gap, dir } = SIZE[variant];
   const words = !hideWords;
 
   if (kind === 'onetwo') {
@@ -658,10 +862,10 @@ export function SignalView({ kind, hideWords, compact = false }: { kind: SignalK
   if (!info.attack) {
     const Icon = kind === 'slipLeft' ? ArrowLeft : kind === 'slipRight' ? ArrowRight : ArrowDown;
     return (
-      <div className={`absolute inset-0 flex items-center justify-center bg-defense text-ink ${compact ? 'gap-1' : 'gap-[4vw]'}`}>
-        <Icon className={icon} strokeWidth={3} />
+      <div className={`absolute inset-0 flex items-center justify-center bg-defense text-ink ${gap} ${dir}`}>
+        <Icon className={`${icon} shrink-0`} strokeWidth={3} />
         {words && (
-          <div className="flex flex-col items-start">
+          <div className={`flex flex-col ${variant === 'panel' ? 'landscape:items-center portrait:items-start' : 'items-start'}`}>
             <span className={`${big} leading-none font-black`}>{info.label}</span>
             <span className={`${sub} font-bold`}>{info.sub}</span>
           </div>
@@ -723,6 +927,9 @@ function CallerResult({
     : undefined;
 
   const tips: string[] = [];
+  if (a && (a.early ?? 0) >= 2) {
+    tips.push(`신호보다 먼저 움직인 경우가 ${a.early}번 있었어요. 신호가 뜬 걸 보고 움직여야 성공이에요.`);
+  }
   if (a && a.accuracy !== null) {
     if (a.accuracy >= 0.8) tips.push('신호대로 정확하게 움직였어요! 단어 숨기기나 레벨 올리기에 도전해 보세요.');
     else if (weakest) tips.push(`더 연습할 동작: ${KIND_NAME[weakest.k]}. ${KIND_TIP[weakest.k](hands)}`);

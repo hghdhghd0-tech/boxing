@@ -178,7 +178,8 @@ export function actionLine(a: JudgeSummary | null | undefined): string {
   if (!a) return '측정 안 함';
   if (a.accuracy === null) return '판정 안 됨 (몸이 잘 안 보였어요)';
   const rt = a.avgReactionMs !== null ? `, 평균 반응 ${sec(a.avgReactionMs)}` : '';
-  return `${pct(a.accuracy)} (판정 ${a.judged}번 중 ${a.correct}번 정답${rt})`;
+  const early = a.early ? `, 신호 전에 움직임 ${a.early}번` : '';
+  return `${pct(a.accuracy)} (판정 ${a.judged}번 중 ${a.correct}번 정답${rt}${early})`;
 }
 
 /** 구글 폼·클래스룸에 붙여 넣을 요약 글 */

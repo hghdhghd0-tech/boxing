@@ -363,6 +363,27 @@ test('슬립 방향이 반대면 오답', () => {
 test('더킹', () => expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)]), 'duck'));
 test('좌우 스텝은 슬립이 아님', () => expectDetect(judgeOnce('orthodox', 'slipLeft', [shiftUpper(0.08, 0, 300, true)]), 'none'));
 test('손을 어깨 아래로 내리면 펀치가 아님', () => expectDetect(judgeOnce('orthodox', 'jab', [dropHand(300)]), 'none'));
+test('신호보다 먼저 펀치를 시작하면 "너무 빨라요"(오답)', () => {
+  const j = new ActionJudge('orthodox');
+  const early = [punch('l', -100)];
+  for (let t = -660; t <= 0; t += 66) j.onFrame(t, frame(t, early), ASPECT);
+  j.onSignal(0, 'jab', 3000);
+  for (let t = 66; t <= 2000; t += 66) j.onFrame(t, frame(t, early), ASPECT);
+  j.flush();
+  const [r] = j.takeFresh();
+  assert(r.early === true && r.correct === false, JSON.stringify(r));
+  assert(j.summary().early === 1, JSON.stringify(j.summary()));
+});
+test('신호를 보고(0.25초 뒤) 친 잽은 정답이고 반응 시간이 잡힌다', () => {
+  const r = judgeOnce('orthodox', 'jab', [punch('l', 250)]);
+  assert(r.correct === true && !r.early && r.reactionMs !== null && r.reactionMs >= 250 && r.reactionMs < 500, JSON.stringify(r));
+});
+test('판정 시간: 신호 간격 3초 → 1.7초, 2초 → 1.7초, 1.2초 → 0.9초', () => {
+  assert(ActionJudge.windowFor(3000) === 1700 && ActionJudge.windowFor(2000) === 1700 && ActionJudge.windowFor(1200) === 900, '판정 시간 계산');
+});
+test('판정 시간이 지난 뒤의 잽은 "동작 없음"(늦음)', () => {
+  expectDetect(judgeOnce('orthodox', 'jab', [punch('l', 1800)]), 'none');
+});
 test('느린 태블릿(1초에 5장면)에서도 잽·더킹을 알아본다', () => {
   expectDetect(judgeOnce('orthodox', 'jab', [punch('l', 300)], 0.95, 200), 'jab');
   expectDetect(judgeOnce('orthodox', 'duck', [shiftUpper(0, 0.13, 300)], 0.95, 200), 'duck');

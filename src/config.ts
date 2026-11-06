@@ -71,9 +71,12 @@ export const JUDGE = {
   oneTwoTieMs: 70,
   /** 잽 신호: 앞손이 나간 뒤 이 시간(ms) 안에 뒷손이 따라 나가면 원투로 봄 (잽 오답) */
   jabConfirmMs: 400,
+  /** 신호 뒤 이 시간(ms)보다 빨리 동작이 잡히면 신호 전에 미리 움직인 것("너무 빨라요")
+   *  (사람이 눈으로 보고 반응하는 데는 보통 0.2초 이상 걸립니다) */
+  minReactionMs: 150,
   /** 판정 구간에서 몸이 보인 장면이 이 비율보다 적으면 "판정 불가" */
   minValidRatio: 0.5,
 };
 
-/** 자세 인식 주기(ms). 66ms ≒ 1초에 15번 */
-export const DETECT_INTERVAL_MS = 66;
+/** 자세 인식 주기(ms). 50ms ≒ 1초에 20번 (빠른 잽도 놓치지 않게. 느린 태블릿은 자동으로 늘어남) */
+export const DETECT_INTERVAL_MS = 50;

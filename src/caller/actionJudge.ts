@@ -39,6 +39,8 @@ export type JudgeResult = {
   correct: boolean | null;
   reactionMs: number | null;
   t0: number;
+  /** 신호보다 먼저 움직임 (너무 빨라요) */
+  early?: boolean;
 };
 
 /** 한 장면의 관절 좌표에서 판정에 쓸 값을 뽑습니다. 인식이 불확실하면 null */
@@ -138,12 +140,17 @@ export class ActionJudge {
     this.stance = stance;
   }
 
-  /** 신호가 나왔을 때 호출. intervalMs는 신호 간격 */
-  onSignal(t: number, kind: SignalKind, intervalMs: number) {
+  /** 판정 시간(ms): 신호가 나온 뒤 이 시간 안에 동작해야 성공 */
+  static windowFor(intervalMs: number) {
+    return Math.min(JUDGE.windowMs, Math.max(900, intervalMs - 300));
+  }
+
+  /** 신호가 나왔을 때 호출. intervalMs는 신호 간격. 판정 시간(ms)을 돌려줍니다. */
+  onSignal(t: number, kind: SignalKind, intervalMs: number): number {
     let refFrames = this.history.filter((f) => f.t >= t - JUDGE.referenceMs && f.t <= t);
     // 느린 태블릿이라 장면 수가 적으면 1초 안의 마지막 두 장면을 씁니다.
     if (refFrames.length < 2) refFrames = this.history.filter((f) => f.t <= t).slice(-2);
-    const windowMs = Math.min(JUDGE.windowMs, Math.max(900, intervalMs - 300));
+    const windowMs = ActionJudge.windowFor(intervalMs);
     this.pending.push({
       expected: kind,
       t0: t,
@@ -155,6 +162,7 @@ export class ActionJudge {
       slip: newStreak(),
       duck: newStreak(),
     });
+    return windowMs;
   }
 
   /** 자세 인식 장면마다 호출 */
@@ -242,13 +250,16 @@ export class ActionJudge {
       r = { expected: p.expected, detected: 'unknown', correct: null, reactionMs: null, t0: p.t0 };
     } else {
       const c = this.classify(p);
-      const correct = c.detected === p.expected;
+      // 신호 뒤 너무 빨리(사람이 반응할 수 없는 시간 안에) 움직였다면 신호 전에 미리 움직인 것
+      const early = c.at !== null && c.at - p.t0 < JUDGE.minReactionMs;
+      const correct = c.detected === p.expected && !early;
       r = {
         expected: p.expected,
         detected: c.detected,
         correct,
         reactionMs: correct && c.at !== null ? Math.max(0, c.at - p.t0) : null,
         t0: p.t0,
+        ...(early ? { early: true } : {}),
       };
     }
     this.results.push(r);
@@ -281,6 +292,8 @@ export type JudgeSummary = {
   accuracy: number | null;
   avgReactionMs: number | null;
   perKind: Partial<Record<SignalKind, KindStat>>;
+  /** 신호보다 먼저 움직인 횟수 (예전 기록에는 없음) */
+  early?: number;
 };
 
 export function summarizeJudgements(results: JudgeResult[]): JudgeSummary {
@@ -301,6 +314,7 @@ export function summarizeJudgements(results: JudgeResult[]): JudgeSummary {
     accuracy: judged.length ? correct.length / judged.length : null,
     avgReactionMs: times.length ? times.reduce((a, b) => a + b, 0) / times.length : null,
     perKind,
+    early: judged.filter((r) => r.early).length,
   };
 }
 
@@ -313,7 +327,9 @@ export function mergeSummaries(list: JudgeSummary[]): JudgeSummary | null {
   let unknown = 0;
   let rtSum = 0;
   let rtN = 0;
+  let early = 0;
   for (const s of list) {
+    early += s.early ?? 0;
     judged += s.judged;
     correct += s.correct;
     unknown += s.unknown;
@@ -333,5 +349,6 @@ export function mergeSummaries(list: JudgeSummary[]): JudgeSummary | null {
     accuracy: judged ? correct / judged : null,
     avgReactionMs: rtN ? rtSum / rtN : null,
     perKind,
+    early,
   };
 }
